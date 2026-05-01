@@ -1,0 +1,268 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum LockerStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+}
+
+enum CompartmentStatus {
+  AVAILABLE
+  RESERVED
+  RENTED
+  EMPTY
+  RETURN_OPEN
+  MAINTENANCE
+}
+
+enum SensorState {
+  CABLE_PRESENT
+  CABLE_ABSENT
+  UNKNOWN
+}
+
+enum CableUnitStatus {
+  AVAILABLE
+  RENTED
+  LOST
+  DAMAGED
+  MAINTENANCE
+}
+
+enum RentalStatus {
+  DRAFT
+  UNLOCKING
+  ACTIVE
+  RETURN_REQUESTED
+  WAITING_FOR_SENSOR
+  RETURNED
+  LATE
+  CANCELLED
+  FAILED
+}
+
+enum ReturnSessionStatus {
+  READY_TO_RETURN
+  LOCKER_OPENING
+  WAITING_FOR_SENSOR
+  VERIFIED
+  TIMEOUT
+  FAILED
+}
+
+enum TopUpStatus {
+  PENDING
+  SUCCESS
+  EXPIRED
+  FAILED
+  CANCELLED
+}
+
+enum WalletTransactionType {
+  TOP_UP
+  RENT_PAYMENT
+  FINE_PAYMENT
+  REFUND
+}
+
+enum WalletTransactionDirection {
+  CREDIT
+  DEBIT
+}
+
+enum WalletTransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+
+enum NotificationType {
+  RENT_SUCCESS
+  RETURN_SUCCESS
+  TOP_UP_SUCCESS
+  RENT_REMINDER
+  LATE_WARNING
+  SYSTEM
+}
+
+model User {
+  id           String         @id @default(cuid())
+  name         String
+  phone        String         @unique
+  email        String         @unique
+  avatarUrl    String?
+  passwordHash String
+  status       UserStatus     @default(ACTIVE)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  wallet       Wallet?
+  rentals      Rental[]
+  topUps       TopUp[]
+  notifications Notification[]
+}
+
+model Wallet {
+  id           String              @id @default(cuid())
+  userId       String              @unique
+  balance      Int                 @default(0)
+  currency     String              @default("IDR")
+  updatedAt    DateTime            @updatedAt
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id            String                     @id @default(cuid())
+  walletId      String
+  type          WalletTransactionType
+  amount        Int
+  direction     WalletTransactionDirection
+  status        WalletTransactionStatus
+  referenceType String?
+  referenceId   String?
+  createdAt     DateTime                   @default(now())
+  wallet        Wallet                     @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  topUps        TopUp[]
+
+  @@index([walletId, createdAt])
+}
+
+model Locker {
+  id               String        @id @default(cuid())
+  name             String
+  address          String
+  lat              Decimal       @db.Decimal(9, 6)
+  lng              Decimal       @db.Decimal(9, 6)
+  status           LockerStatus  @default(ONLINE)
+  operationalHours String        @default("24/7")
+  lastHeartbeatAt  DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  compartments     Compartment[]
+  cableUnits       CableUnit[]
+  rentals          Rental[]
+  returnSessions   ReturnSession[]
+}
+
+model Compartment {
+  id                 String            @id @default(cuid())
+  lockerId           String
+  number             Int
+  status             CompartmentStatus @default(AVAILABLE)
+  currentCableUnitId String?
+  lastSensorState    SensorState       @default(UNKNOWN)
+  updatedAt          DateTime          @updatedAt
+  locker             Locker            @relation(fields: [lockerId], references: [id], onDelete: Cascade)
+  cableUnits         CableUnit[]
+  rentals            Rental[]
+  returnSessions     ReturnSession[]
+
+  @@unique([lockerId, number])
+  @@index([lockerId, status])
+}
+
+model CableUnit {
+  id                   String          @id @default(cuid())
+  serialNumber         String          @unique
+  status               CableUnitStatus @default(AVAILABLE)
+  specification        String
+  isSniCertified       Boolean         @default(true)
+  hasOverloadProtection Boolean        @default(true)
+  currentLockerId      String?
+  currentCompartmentId String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  currentLocker        Locker?         @relation(fields: [currentLockerId], references: [id], onDelete: SetNull)
+  currentCompartment   Compartment?    @relation(fields: [currentCompartmentId], references: [id], onDelete: SetNull)
+  rentals              Rental[]
+
+  @@index([currentLockerId, status])
+}
+
+model Rental {
+  id            String       @id @default(cuid())
+  userId        String
+  lockerId      String
+  compartmentId String
+  cableUnitId   String
+  status        RentalStatus @default(DRAFT)
+  durationMinutes Int
+  startedAt     DateTime
+  dueAt         DateTime
+  returnedAt    DateTime?
+  rentFee       Int
+  fine          Int          @default(0)
+  totalFee      Int
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  locker        Locker       @relation(fields: [lockerId], references: [id], onDelete: Restrict)
+  compartment   Compartment  @relation(fields: [compartmentId], references: [id], onDelete: Restrict)
+  cableUnit     CableUnit    @relation(fields: [cableUnitId], references: [id], onDelete: Restrict)
+  returnSessions ReturnSession[]
+
+  @@index([userId, status])
+}
+
+model ReturnSession {
+  id                  String              @id @default(cuid())
+  rentalId            String
+  returnLockerId      String
+  returnCompartmentId String
+  status              ReturnSessionStatus @default(READY_TO_RETURN)
+  openedAt            DateTime?
+  sensorTimeoutAt     DateTime?
+  verifiedAt          DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  rental              Rental              @relation(fields: [rentalId], references: [id], onDelete: Cascade)
+  returnLocker        Locker              @relation(fields: [returnLockerId], references: [id], onDelete: Restrict)
+  returnCompartment   Compartment         @relation(fields: [returnCompartmentId], references: [id], onDelete: Restrict)
+}
+
+model TopUp {
+  id                  String          @id @default(cuid())
+  userId              String
+  amount              Int
+  status              TopUpStatus     @default(PENDING)
+  dummyQrPayload      String
+  dummyQrTokenHash    String
+  expiresAt           DateTime?
+  confirmedAt         DateTime?
+  walletTransactionId String?
+  createdAt           DateTime        @default(now())
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletTransaction   WalletTransaction? @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+}
+
+model Notification {
+  id                   String           @id @default(cuid())
+  userId               String
+  type                 NotificationType
+  title                String
+  message              String
+  relatedTransactionId String?
+  relatedRentalId      String?
+  readAt               DateTime?
+  createdAt            DateTime         @default(now())
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}

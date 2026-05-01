@@ -1,0 +1,52 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: dev
+    command: pnpm --filter @colokin/api dev
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: development
+      API_PORT: 4000
+      DATABASE_URL: postgresql://colokin:colokin@postgres:5432/colokin?schema=public
+      JWT_ACCESS_SECRET: dev_access_secret_change_me
+      JWT_REFRESH_SECRET: dev_refresh_secret_change_me
+      MQTT_URL: mqtt://mosquitto:1883
+      IOT_MODE: mock
+      FCM_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./packages:/app/packages
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_USER: colokin
+      POSTGRES_PASSWORD: colokin
+      POSTGRES_DB: colokin
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U colokin -d colokin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+volumes:
+  postgres_data:

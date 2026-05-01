@@ -1,0 +1,12 @@
+node_modules
+dist
+.turbo
+.expo
+.env
+.env.*
+!.env.example
+pnpm-lock.yaml
+coverage
+ios
+android
+cache/*.md

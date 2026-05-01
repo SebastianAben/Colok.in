@@ -1,0 +1,39 @@
+export const colors = {
+  background: "#061321",
+  backgroundDeep: "#03101B",
+  surface: "#0A1A2A",
+  surfaceElevated: "#13263A",
+  surfaceMuted: "#1A3045",
+  primary: "#1E5BFF",
+  primaryDark: "#0B3A8F",
+  primaryCyan: "#18D7FF",
+  accent: "#D7FF19",
+  accentSoft: "#B6F214",
+  accentGlow: "#E6FF3D",
+  accentText: "#142000",
+  text: "#F4F8FF",
+  textSecondary: "#B7C2D1",
+  textMuted: "#7F8DA3",
+  textDisabled: "#566579",
+  border: "#2A4158",
+  borderStrong: "#54708C",
+  success: "#9DFF3A",
+  warning: "#F5C542",
+  danger: "#FF5C5C",
+  shadow: "#000814",
+} as const;
+
+export const spacing = {
+  screen: 20,
+  section: 24,
+  card: 20,
+  small: 12,
+  navHeight: 80,
+  scanButton: 64,
+} as const;
+
+export const radii = {
+  card: 18,
+  button: 12,
+  pill: 9999,
+} as const;

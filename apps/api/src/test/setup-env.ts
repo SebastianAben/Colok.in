@@ -1,0 +1,8 @@
+process.env.NODE_ENV = "test";
+process.env.API_PORT ??= "4000";
+process.env.DATABASE_URL ??= "postgresql://colokin:colokin@127.0.0.1:15432/colokin?schema=public";
+process.env.JWT_ACCESS_SECRET ??= "dev_access_secret_change_me";
+process.env.JWT_REFRESH_SECRET ??= "dev_refresh_secret_change_me";
+process.env.MQTT_URL ??= "mqtt://127.0.0.1:1883";
+process.env.IOT_MODE ??= "mock";
+process.env.FCM_ENABLED = "false";

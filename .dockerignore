@@ -1,0 +1,16 @@
+.git
+.DS_Store
+node_modules
+**/node_modules
+dist
+**/dist
+.turbo
+.expo
+coverage
+ios
+android
+.env
+.env.*
+!.env.example
+!.env.server.example
+docs/*.pdf

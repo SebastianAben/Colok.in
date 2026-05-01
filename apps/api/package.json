@@ -1,0 +1,38 @@
+{
+  "name": "@colokin/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --dir ../.. --filter @colokin/shared build && tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "lint": "pnpm --dir ../.. --filter @colokin/shared build && tsc -p tsconfig.json --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:studio": "prisma studio --hostname 0.0.0.0",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "typecheck": "pnpm --dir ../.. --filter @colokin/shared build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@colokin/shared": "workspace:*",
+    "@prisma/client": "6",
+    "dotenv": "latest",
+    "express": "latest",
+    "firebase-admin": "^13.8.0",
+    "jose": "^6.2.3",
+    "mqtt": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "@types/supertest": "^7.2.0",
+    "prisma": "6",
+    "supertest": "^7.2.2",
+    "tsx": "latest",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
+  }
+}

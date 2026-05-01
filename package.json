@@ -1,0 +1,27 @@
+{
+  "name": "colokin",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.1",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "dev:api": "pnpm --filter @colokin/api dev",
+    "dev:mobile": "pnpm --filter @colokin/mobile dev",
+    "docker:up": "docker compose up -d postgres mosquitto",
+    "docker:down": "docker compose down",
+    "docker:server:up": "docker compose -f docker-compose.server.yml up -d",
+    "docker:server:down": "docker compose -f docker-compose.server.yml down",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "prettier": "latest",
+    "turbo": "latest",
+    "typescript": "^5.9.3"
+  }
+}
