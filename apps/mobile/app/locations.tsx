@@ -1,3 +1,3 @@
-import { LocationsScreen } from "../src/components/milestone-screens";
+import { LocationSearchScreen } from "../src/components/location-screen";
 
-export default LocationsScreen;
+export default LocationSearchScreen;

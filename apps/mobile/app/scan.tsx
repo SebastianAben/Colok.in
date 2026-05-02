@@ -1,3 +1,3 @@
-import { ScanScreen } from "../src/components/milestone-screens";
+import { QrScanScreen } from "../src/components/scan-screen";
 
-export default ScanScreen;
+export default QrScanScreen;

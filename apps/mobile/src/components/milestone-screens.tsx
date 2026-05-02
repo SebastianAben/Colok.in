@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import {
   Card,
@@ -17,25 +18,50 @@ import {
   demoNotifications,
   demoRental,
   demoTransactions,
-  demoUser,
   settingsItems,
 } from "../data/demo";
+import { useAuth } from "../auth/auth-context";
 import { colors, radii, spacing } from "../theme/colors";
 
+function formatRupiah(amount: number) {
+  return `Rp ${new Intl.NumberFormat("id-ID").format(amount)}`;
+}
+
 export function HomeScreen() {
+  const { me, refreshMe } = useAuth();
+  const [balanceVisible, setBalanceVisible] = useState(true);
+  const balance = me ? formatRupiah(me.wallet.balance) : "Rp 0";
+  const balanceLabel = balanceVisible ? balance : "Rp ••••••";
+
   return (
     <ScreenShell activeTab="Home">
       <View style={screenStyles.balanceCard}>
         <View style={screenStyles.balanceTop}>
           <View>
             <Text style={screenStyles.balanceLabel}>Your Balance:</Text>
-            <Text style={screenStyles.balanceAmount}>{demoUser.balance}</Text>
+            <Text style={screenStyles.balanceAmount}>{balanceLabel}</Text>
           </View>
-          <Ionicons name="eye-outline" size={22} color={colors.text} />
+          <Pressable
+            accessibilityLabel={balanceVisible ? "Hide balance" : "Show balance"}
+            accessibilityRole="button"
+            onPress={() => setBalanceVisible((current) => !current)}
+            style={screenStyles.eyeButton}
+          >
+            <Ionicons
+              name={balanceVisible ? "eye-outline" : "eye-off-outline"}
+              size={22}
+              color={colors.text}
+            />
+          </Pressable>
         </View>
-        <Pressable style={screenStyles.topUpButton} onPress={() => router.push("/top-up")}>
-          <Text style={screenStyles.topUpButtonText}>Top Up</Text>
-        </Pressable>
+        <View style={screenStyles.balanceActions}>
+          <Pressable style={screenStyles.topUpButton} onPress={() => router.push("/top-up")}>
+            <Text style={screenStyles.topUpButtonText}>Top Up</Text>
+          </Pressable>
+          <Pressable style={screenStyles.refreshButton} onPress={() => void refreshMe()}>
+            <Ionicons name="refresh" size={18} color={colors.accent} />
+          </Pressable>
+        </View>
       </View>
 
       <Card style={screenStyles.activeCard}>
@@ -202,17 +228,20 @@ export function NotificationsScreen() {
 }
 
 export function SettingsScreen() {
+  const { logout, me } = useAuth();
+  const initial = me?.name.charAt(0).toUpperCase() ?? "C";
+
   return (
     <ScreenShell activeTab="Settings" title="Settings">
       <Card>
         <View style={screenStyles.profileRow}>
           <View style={screenStyles.profileAvatar}>
-            <Text style={screenStyles.profileAvatarText}>J</Text>
+            <Text style={screenStyles.profileAvatarText}>{initial}</Text>
           </View>
           <View style={screenStyles.flexText}>
-            <Text style={screenStyles.cardTitle}>{demoUser.name}</Text>
-            <Text style={screenStyles.cardBody}>{demoUser.phone}</Text>
-            <Text style={screenStyles.cardBody}>{demoUser.email}</Text>
+            <Text style={screenStyles.cardTitle}>{me?.name ?? "Colok.in User"}</Text>
+            <Text style={screenStyles.cardBody}>{me?.phone ?? "-"}</Text>
+            <Text style={screenStyles.cardBody}>{me?.email ?? "-"}</Text>
           </View>
         </View>
       </Card>
@@ -224,15 +253,29 @@ export function SettingsScreen() {
           </Pressable>
         ))}
       </Card>
-      <SecondaryButton label="Log Out" />
+      <SecondaryButton label="Log Out" onPress={() => void logout()} />
     </ScreenShell>
   );
 }
 
 export function RentDurationScreen() {
+  const params = useLocalSearchParams<{
+    availableCableCount?: string;
+    compartmentNumber?: string;
+    lockerName?: string;
+  }>();
+  const availableCableCount = params.availableCableCount ?? "3";
+  const lockerName = params.lockerName ?? demoLocker.name;
+
   return (
     <ModalScreen primaryLabel="Confirm" onPrimary={() => router.push("/rent/review")}>
-      <Text style={screenStyles.modalTitle}>There are 3 extension cable available!</Text>
+      <Text style={screenStyles.modalTitle}>
+        There are {availableCableCount} extension cable available!
+      </Text>
+      <Text style={screenStyles.cardBody}>{lockerName}</Text>
+      {params.compartmentNumber ? (
+        <Text style={screenStyles.cardBody}>Suggested locker {params.compartmentNumber}</Text>
+      ) : null}
       <Text style={screenStyles.cardBody}>Please set your rental duration</Text>
       <View style={screenStyles.stepperRow}>
         <StepperUnit label="Hours" value="2" />
@@ -323,28 +366,6 @@ export function ReturnSuccessScreen() {
   );
 }
 
-export function TopUpPlaceholderScreen() {
-  return (
-    <ScreenShell
-      activeTab="Home"
-      title="Top Up"
-      subtitle="Dummy QR top up starts in Milestone 3. This placeholder keeps the design route ready."
-    >
-      <Card>
-        <View style={screenStyles.instructionIcon}>
-          <Ionicons name="wallet-outline" size={34} color={colors.accent} />
-        </View>
-        <Text style={screenStyles.instructionTitle}>Top up Colok.in credit</Text>
-        <Text style={screenStyles.cardBody}>
-          Entering an amount, generating a dummy QR, and confirming wallet balance will be wired in
-          the next milestone.
-        </Text>
-        <PrimaryButton label="Back to Home" onPress={() => router.replace("/home")} />
-      </Card>
-    </ScreenShell>
-  );
-}
-
 function HelpCard({ icon, title }: { icon: keyof typeof Ionicons.glyphMap; title: string }) {
   return (
     <Card style={screenStyles.helpCard}>
@@ -422,6 +443,10 @@ const screenStyles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
   },
+  balanceActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
   cardBody: {
     color: colors.textSecondary,
     fontSize: 14,
@@ -461,6 +486,13 @@ const screenStyles = StyleSheet.create({
     borderTopWidth: 5,
     right: -2,
     top: -2,
+  },
+  eyeButton: {
+    alignItems: "center",
+    borderRadius: radii.pill,
+    height: 38,
+    justifyContent: "center",
+    width: 38,
   },
   flashButton: {
     alignItems: "center",
@@ -785,6 +817,7 @@ const screenStyles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.accent,
     borderRadius: radii.button,
+    flex: 1,
     minHeight: 48,
     justifyContent: "center",
   },
@@ -792,6 +825,15 @@ const screenStyles = StyleSheet.create({
     color: colors.accentText,
     fontSize: 16,
     fontWeight: "900",
+  },
+  refreshButton: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.border,
+    borderRadius: radii.button,
+    borderWidth: 1,
+    justifyContent: "center",
+    width: 52,
   },
   transactionFooter: {
     alignItems: "center",

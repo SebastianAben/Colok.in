@@ -4,6 +4,7 @@ import type { Href } from "expo-router";
 import type { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "../auth/auth-context";
 import { colors, radii, spacing } from "../theme/colors";
 
 type IconName = keyof typeof Ionicons.glyphMap;
@@ -58,6 +59,9 @@ export function ScreenShell({
 }
 
 export function AppHeader() {
+  const { me } = useAuth();
+  const initial = me?.name.charAt(0).toUpperCase() ?? "C";
+
   return (
     <View style={styles.header}>
       <View style={styles.headerIcon}>
@@ -65,7 +69,7 @@ export function AppHeader() {
       </View>
       <Text style={styles.brand}>Colok.in</Text>
       <View style={styles.avatar}>
-        <Text style={styles.avatarText}>J</Text>
+        <Text style={styles.avatarText}>{initial}</Text>
       </View>
     </View>
   );

@@ -40,6 +40,47 @@ export type MeResponse = AuthUser & {
   activeRentalId: string | null;
 };
 
+export type WalletSummary = {
+  balance: number;
+  currency: typeof CURRENCY_IDR;
+};
+
+export type CreateTopUpRequest = {
+  amount: number;
+};
+
+export type CreateTopUpResponse = {
+  topUpId: string;
+  status: "PENDING";
+  amount: number;
+  dummyQrPayload: string;
+  expiresAt: string;
+};
+
+export type ConfirmTopUpRequest = {
+  dummyQrPayload: string;
+};
+
+export type ConfirmTopUpResponse = {
+  id: string;
+  status: "SUCCESS";
+  amount: number;
+  wallet: WalletSummary;
+  walletTransactionId: string;
+  notificationId: string;
+  createdAt: string;
+  confirmedAt: string;
+};
+
+export type TopUpDetailResponse = {
+  id: string;
+  status: TopUpStatus;
+  amount: number;
+  dummyQrPayload: string;
+  createdAt: string;
+  confirmedAt: string | null;
+};
+
 export type LockerListItem = {
   id: string;
   name: string;
@@ -65,6 +106,22 @@ export type LockerDetailResponse = {
   availableCableCount: number;
   status: LockerStatus;
   compartments: LockerCompartment[];
+};
+
+export type QrValidateRequest = {
+  qrPayload: string;
+  intent: QrIntent;
+};
+
+export type QrValidateResponse = {
+  valid: true;
+  intent: QrIntent;
+  locker: {
+    id: string;
+    name: string;
+    availableCableCount: number;
+  };
+  compartment?: LockerCompartment;
 };
 
 export const CURRENCY_IDR = "IDR" as const;

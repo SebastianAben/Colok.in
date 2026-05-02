@@ -1,3 +1,3 @@
-import { TopUpPlaceholderScreen } from "../src/components/milestone-screens";
+import { TopUpScreen } from "../src/components/top-up-screen";
 
-export default TopUpPlaceholderScreen;
+export default TopUpScreen;

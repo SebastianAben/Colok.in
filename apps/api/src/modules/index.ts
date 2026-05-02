@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { authRouter } from "./auth/routes.js";
 import { lockersRouter } from "./lockers/routes.js";
+import { qrRouter } from "./qr/routes.js";
 import { usersRouter } from "./users/routes.js";
+import { walletRouter } from "./wallet/topups/routes.js";
 
 export function createV1Router() {
   const router = Router();
@@ -9,6 +11,8 @@ export function createV1Router() {
   router.use("/auth", authRouter);
   router.use("/me", usersRouter);
   router.use("/lockers", lockersRouter);
+  router.use("/qr", qrRouter);
+  router.use("/wallet", walletRouter);
 
   return router;
 }
