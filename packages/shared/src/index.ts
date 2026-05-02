@@ -124,6 +124,152 @@ export type QrValidateResponse = {
   compartment?: LockerCompartment;
 };
 
+export type RentalQuoteRequest = {
+  lockerId: string;
+  durationMinutes: number;
+};
+
+export type RentalQuoteResponse = {
+  lockerId: string;
+  locationName: string;
+  durationMinutes: number;
+  rentFee: number;
+  depositAmount: 0;
+  totalCharge: number;
+  availableCableCount: number;
+};
+
+export type CreateRentalRequest = {
+  lockerId: string;
+  compartmentId?: string;
+  durationMinutes: number;
+  paymentSource: "WALLET";
+};
+
+export type RentalDetailResponse = {
+  id: string;
+  status: RentalStatus;
+  locker: {
+    id: string;
+    name: string;
+  };
+  compartmentNumber: number;
+  startedAt: string;
+  dueAt: string;
+  rentFee: number;
+  unlockRequestId?: string;
+};
+
+export type ReturnIntentRequest = {
+  lockerId?: string;
+};
+
+export type ReturnIntentResponse = {
+  rentalId: string;
+  returnSessionId: string;
+  returnLocation: string;
+  compartmentNumber: number;
+  timeLeftSeconds: number;
+  lateBySeconds: number;
+  fine: number;
+  requiresFinePayment: boolean;
+  finePaid: boolean;
+  status: ReturnSessionStatus;
+};
+
+export type PayReturnFineResponse = {
+  returnSessionId: string;
+  fine: number;
+  paid: true;
+  walletBalance: number;
+  walletTransactionId: string | null;
+};
+
+export type ConfirmReturnResponse = {
+  returnSessionId: string;
+  status: ReturnSessionStatus;
+  locker: {
+    id: string;
+    name: string;
+  };
+  compartmentNumber: number;
+  sensorTimeoutAt: string;
+};
+
+export type ReturnDetailResponse = {
+  id: string;
+  rentalId: string;
+  status: ReturnSessionStatus;
+  verifiedAt: string | null;
+  finalFee: number;
+  fine: number;
+  returnLocation: string;
+  compartmentNumber: number;
+  returnedAt: string | null;
+};
+
+export type ActiveRentalResponse = {
+  id: string;
+  status: RentalStatus;
+  locker: {
+    id: string;
+    name: string;
+  };
+  compartmentNumber: number;
+  startedAt: string;
+  dueAt: string;
+  serverNow: string;
+  timeLeftSeconds: number;
+  estimatedFee: number;
+  fine: number;
+} | null;
+
+export type RegisterPushTokenRequest = {
+  token: string;
+  platform: "ios" | "android" | "web" | "unknown";
+  deviceId?: string;
+};
+
+export type RevokePushTokenRequest = {
+  token: string;
+};
+
+export type PushTokenResponse = {
+  success: true;
+};
+
+export type NotificationListItem = {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  date: string;
+  createdAt: string;
+  readAt: string | null;
+  relatedTransactionId: string | null;
+  relatedRentalId: string | null;
+};
+
+export type NotificationsResponse = NotificationListItem[];
+
+export type MarkNotificationReadResponse = {
+  success: true;
+};
+
+export type TransactionListItem = {
+  id: string;
+  type: "RENTAL";
+  status: RentalStatus;
+  locationName: string;
+  totalRentFee: number;
+  startRentAt: string;
+  returnedAt: string | null;
+  durationMinutes: number;
+  fine: number;
+};
+
+export type TransactionsResponse = TransactionListItem[];
+
 export const CURRENCY_IDR = "IDR" as const;
 
 export const API_ERROR_CODES = [

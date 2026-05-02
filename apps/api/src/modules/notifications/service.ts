@@ -1,92 +1,105 @@
-import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
-import { getMessaging } from "firebase-admin/messaging";
-import { env } from "../../lib/env.js";
+import type {
+  MarkNotificationReadResponse,
+  NotificationListItem,
+  NotificationsResponse,
+} from "@colokin/shared";
+import { forbiddenError } from "../../lib/api-error.js";
+import { prisma } from "../../lib/prisma.js";
+import { sendPushNotification } from "./push.js";
 
-export type NotificationSendInput = {
-  token: string;
+function iso(date: Date) {
+  return date.toISOString();
+}
+
+function dateOnly(date: Date) {
+  return iso(date).slice(0, 10);
+}
+
+function toNotificationListItem(notification: {
+  id: string;
+  type: NotificationListItem["type"];
   title: string;
-  body: string;
-  data?: Record<string, string>;
-};
-
-export type NotificationSendResult =
-  | {
-      status: "sent";
-      messageId: string;
-    }
-  | {
-      status: "skipped";
-      reason: "disabled" | "missing_credentials";
-    };
-
-function hasFirebaseCredentials() {
-  return Boolean(env.FIREBASE_PROJECT_ID && env.FIREBASE_CLIENT_EMAIL && env.FIREBASE_PRIVATE_KEY);
-}
-
-function getFirebaseApp(): App | null {
-  if (!env.FCM_ENABLED) {
-    return null;
-  }
-
-  if (!hasFirebaseCredentials()) {
-    return null;
-  }
-
-  const existingApp = getApps()[0];
-  if (existingApp) {
-    return existingApp;
-  }
-
-  return initializeApp({
-    credential: cert({
-      projectId: env.FIREBASE_PROJECT_ID,
-      clientEmail: env.FIREBASE_CLIENT_EMAIL,
-      privateKey: env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    }),
-  });
-}
-
-export async function sendPushNotification(
-  input: NotificationSendInput,
-): Promise<NotificationSendResult> {
-  if (!env.FCM_ENABLED) {
-    return {
-      status: "skipped",
-      reason: "disabled",
-    };
-  }
-
-  const app = getFirebaseApp();
-  if (!app) {
-    return {
-      status: "skipped",
-      reason: "missing_credentials",
-    };
-  }
-
-  const messageId = await getMessaging(app).send({
-    token: input.token,
-    notification: {
-      title: input.title,
-      body: input.body,
-    },
-    data: input.data,
-  });
-
+  message: string;
+  relatedTransactionId: string | null;
+  relatedRentalId: string | null;
+  readAt: Date | null;
+  createdAt: Date;
+}): NotificationListItem {
   return {
-    status: "sent",
-    messageId,
+    id: notification.id,
+    type: notification.type,
+    title: notification.title,
+    message: notification.message,
+    date: dateOnly(notification.createdAt),
+    createdAt: iso(notification.createdAt),
+    readAt: notification.readAt ? iso(notification.readAt) : null,
+    relatedTransactionId: notification.relatedTransactionId,
+    relatedRentalId: notification.relatedRentalId,
   };
 }
 
-export function getNotificationMode() {
-  if (!env.FCM_ENABLED) {
-    return "disabled" as const;
+export async function listNotifications(userId: string): Promise<NotificationsResponse> {
+  const notifications = await prisma.notification.findMany({
+    where: { userId },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  return notifications.map(toNotificationListItem);
+}
+
+export async function markNotificationRead(
+  userId: string,
+  notificationId: string,
+): Promise<MarkNotificationReadResponse> {
+  const notification = await prisma.notification.findUnique({
+    where: { id: notificationId },
+    select: {
+      userId: true,
+    },
+  });
+
+  if (!notification || notification.userId !== userId) {
+    throw forbiddenError();
   }
 
-  if (!hasFirebaseCredentials()) {
-    return "missing_credentials" as const;
-  }
+  await prisma.notification.update({
+    where: { id: notificationId },
+    data: {
+      readAt: new Date(),
+    },
+  });
 
-  return "enabled" as const;
+  return { success: true };
+}
+
+export async function sendPushToUser(
+  userId: string,
+  input: {
+    title: string;
+    body: string;
+    data?: Record<string, string>;
+  },
+) {
+  const tokens = await prisma.deviceToken.findMany({
+    where: {
+      userId,
+      revokedAt: null,
+    },
+    select: {
+      token: true,
+    },
+  });
+
+  await Promise.allSettled(
+    tokens.map((deviceToken) =>
+      sendPushNotification({
+        token: deviceToken.token,
+        title: input.title,
+        body: input.body,
+        data: input.data,
+      }),
+    ),
+  );
 }

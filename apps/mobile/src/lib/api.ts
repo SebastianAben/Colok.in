@@ -4,13 +4,29 @@ import type {
   AuthResponse,
   ConfirmTopUpRequest,
   ConfirmTopUpResponse,
+  CreateRentalRequest,
   CreateTopUpRequest,
   CreateTopUpResponse,
+  ConfirmReturnResponse,
   LockerListItem,
   MeResponse,
   QrValidateRequest,
   QrValidateResponse,
+  ActiveRentalResponse,
+  RentalDetailResponse,
+  RentalQuoteRequest,
+  RentalQuoteResponse,
+  MarkNotificationReadResponse,
   TopUpDetailResponse,
+  NotificationListItem,
+  PayReturnFineResponse,
+  PushTokenResponse,
+  RegisterPushTokenRequest,
+  ReturnDetailResponse,
+  ReturnIntentRequest,
+  ReturnIntentResponse,
+  RevokePushTokenRequest,
+  TransactionListItem,
 } from "@colokin/shared";
 
 export const apiBaseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000/v1";
@@ -158,6 +174,101 @@ export function validateQrRequest(token: string, input: QrValidateRequest) {
   return apiRequest<QrValidateResponse>("/qr/validate", {
     body: input,
     method: "POST",
+    token,
+  });
+}
+
+export function getActiveRentalRequest(token: string) {
+  return apiRequest<ActiveRentalResponse>("/rentals/active", {
+    token,
+  });
+}
+
+export function createRentalQuoteRequest(token: string, input: RentalQuoteRequest) {
+  return apiRequest<RentalQuoteResponse>("/rentals/quote", {
+    body: input,
+    method: "POST",
+    token,
+  });
+}
+
+export function createRentalRequest(token: string, input: CreateRentalRequest) {
+  return apiRequest<RentalDetailResponse>("/rentals", {
+    body: input,
+    method: "POST",
+    token,
+  });
+}
+
+export function getRentalRequest(token: string, rentalId: string) {
+  return apiRequest<RentalDetailResponse>(`/rentals/${rentalId}`, {
+    token,
+  });
+}
+
+export function createReturnIntentRequest(
+  token: string,
+  rentalId: string,
+  input: ReturnIntentRequest,
+) {
+  return apiRequest<ReturnIntentResponse>(`/rentals/${rentalId}/return-intent`, {
+    body: input,
+    method: "POST",
+    token,
+  });
+}
+
+export function payReturnFineRequest(token: string, returnSessionId: string) {
+  return apiRequest<PayReturnFineResponse>(`/returns/${returnSessionId}/pay-fine`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function confirmReturnRequest(token: string, returnSessionId: string) {
+  return apiRequest<ConfirmReturnResponse>(`/returns/${returnSessionId}/confirm`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function getReturnSessionRequest(token: string, returnSessionId: string) {
+  return apiRequest<ReturnDetailResponse>(`/returns/${returnSessionId}`, {
+    token,
+  });
+}
+
+export function listTransactionsRequest(token: string) {
+  return apiRequest<TransactionListItem[]>("/transactions", {
+    token,
+  });
+}
+
+export function registerPushTokenRequest(token: string, input: RegisterPushTokenRequest) {
+  return apiRequest<PushTokenResponse>("/devices/push-token", {
+    body: input,
+    method: "POST",
+    token,
+  });
+}
+
+export function revokePushTokenRequest(token: string, input: RevokePushTokenRequest) {
+  return apiRequest<PushTokenResponse>("/devices/push-token", {
+    body: input,
+    method: "DELETE",
+    token,
+  });
+}
+
+export function listNotificationsRequest(token: string) {
+  return apiRequest<NotificationListItem[]>("/notifications", {
+    token,
+  });
+}
+
+export function markNotificationReadRequest(token: string, notificationId: string) {
+  return apiRequest<MarkNotificationReadResponse>(`/notifications/${notificationId}/read`, {
+    method: "PATCH",
     token,
   });
 }

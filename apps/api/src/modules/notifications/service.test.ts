@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getNotificationMode, sendPushNotification } from "./service.js";
+import { getNotificationMode, sendPushNotification } from "./push.js";
 
 describe("notification service", () => {
   it("uses local no-op mode when FCM is disabled", async () => {

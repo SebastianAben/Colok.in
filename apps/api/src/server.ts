@@ -6,6 +6,7 @@ import { getHealthReport, type HealthReport } from "./lib/health.js";
 import { prisma } from "./lib/prisma.js";
 import { requestIdMiddleware } from "./middleware/request-id.js";
 import { createV1Router } from "./modules/index.js";
+import { runRentalReminderSweep } from "./modules/rentals/reminders.js";
 
 const app = express();
 
@@ -41,8 +42,15 @@ if (env.NODE_ENV !== "test") {
   const server = app.listen(env.API_PORT, "0.0.0.0", () => {
     console.log(`Colok.in API listening on port ${env.API_PORT}`);
   });
+  const reminderSweep = setInterval(() => {
+    void runRentalReminderSweep().catch((error) => {
+      console.error("Rental reminder sweep failed.", error);
+    });
+  }, 60_000);
+  reminderSweep.unref();
 
   const shutdown = async () => {
+    clearInterval(reminderSweep);
     server.close(async () => {
       await prisma.$disconnect();
       process.exit(0);

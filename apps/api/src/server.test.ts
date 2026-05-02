@@ -516,6 +516,688 @@ describe("Milestone 4 QR validation", () => {
   });
 });
 
+describe("Milestone 5 rent flow with mock IoT", () => {
+  it("returns a rental quote for the Labtek V demo locker", async () => {
+    const auth = await registerTestUser();
+
+    const response = await request(app)
+      .post("/v1/rentals/quote")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        lockerId: demoLockerId,
+        durationMinutes: 120,
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      lockerId: demoLockerId,
+      locationName: "Labtek V ITB",
+      durationMinutes: 120,
+      rentFee: 50000,
+      depositAmount: 0,
+      totalCharge: 50000,
+      availableCableCount: 3,
+    });
+  });
+
+  it("rejects quote durations outside the MVP rental limits", async () => {
+    const auth = await registerTestUser();
+
+    for (const durationMinutes of [15, 45, 390]) {
+      const response = await request(app)
+        .post("/v1/rentals/quote")
+        .set("Authorization", `Bearer ${auth.accessToken}`)
+        .send({
+          lockerId: demoLockerId,
+          durationMinutes,
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("creates an active rental, debits wallet, records transaction and reduces stock", async () => {
+    const auth = await registerTestUser();
+    const locker = await createQrLocker();
+    await setWalletBalance(auth.userId, 100000);
+
+    const response = await request(app)
+      .post("/v1/rentals")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        lockerId: locker.lockerId,
+        compartmentId: locker.compartmentId,
+        durationMinutes: 120,
+        paymentSource: "WALLET",
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data).toMatchObject({
+      status: "ACTIVE",
+      locker: {
+        id: locker.lockerId,
+        name: locker.name,
+      },
+      compartmentNumber: 1,
+      rentFee: 50000,
+      unlockRequestId: expect.stringMatching(/^mock_unlock_/),
+    });
+
+    await expect(
+      prisma.wallet.findUniqueOrThrow({ where: { userId: auth.userId } }),
+    ).resolves.toMatchObject({
+      balance: 50000,
+    });
+
+    await expect(
+      prisma.walletTransaction.findFirstOrThrow({
+        where: {
+          wallet: {
+            userId: auth.userId,
+          },
+          referenceId: response.body.data.id,
+        },
+      }),
+    ).resolves.toMatchObject({
+      amount: 50000,
+      direction: "DEBIT",
+      status: "SUCCESS",
+      type: "RENT_PAYMENT",
+    });
+
+    await expect(
+      prisma.notification.findFirstOrThrow({
+        where: {
+          relatedRentalId: response.body.data.id,
+          userId: auth.userId,
+        },
+      }),
+    ).resolves.toMatchObject({
+      type: "RENT_SUCCESS",
+    });
+
+    await expect(
+      prisma.compartment.findUniqueOrThrow({ where: { id: locker.compartmentId } }),
+    ).resolves.toMatchObject({
+      lastSensorState: "CABLE_ABSENT",
+      status: "RENTED",
+    });
+    await expect(
+      prisma.cableUnit.findUniqueOrThrow({ where: { id: locker.cableUnitId } }),
+    ).resolves.toMatchObject({
+      status: "RENTED",
+    });
+  });
+
+  it("rejects rental creation when wallet balance is insufficient", async () => {
+    const auth = await registerTestUser();
+    const locker = await createQrLocker();
+    await setWalletBalance(auth.userId, 10000);
+
+    const response = await request(app)
+      .post("/v1/rentals")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        lockerId: locker.lockerId,
+        compartmentId: locker.compartmentId,
+        durationMinutes: 120,
+        paymentSource: "WALLET",
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INSUFFICIENT_BALANCE");
+  });
+
+  it("blocks duplicate active rentals for the same user", async () => {
+    const auth = await registerTestUser();
+    const firstLocker = await createQrLocker();
+    const secondLocker = await createQrLocker();
+    await setWalletBalance(auth.userId, 150000);
+
+    await request(app).post("/v1/rentals").set("Authorization", `Bearer ${auth.accessToken}`).send({
+      lockerId: firstLocker.lockerId,
+      compartmentId: firstLocker.compartmentId,
+      durationMinutes: 60,
+      paymentSource: "WALLET",
+    });
+
+    const response = await request(app)
+      .post("/v1/rentals")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        lockerId: secondLocker.lockerId,
+        compartmentId: secondLocker.compartmentId,
+        durationMinutes: 60,
+        paymentSource: "WALLET",
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("USER_HAS_ACTIVE_RENTAL");
+  });
+
+  it("rejects rental creation for offline lockers or no available stock", async () => {
+    const auth = await registerTestUser();
+    const offlineLocker = await createQrLocker({ status: "OFFLINE" });
+    const emptyLocker = await createQrLocker({ available: false });
+    await setWalletBalance(auth.userId, 100000);
+
+    const offlineResponse = await request(app)
+      .post("/v1/rentals")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        lockerId: offlineLocker.lockerId,
+        compartmentId: offlineLocker.compartmentId,
+        durationMinutes: 60,
+        paymentSource: "WALLET",
+      });
+
+    expect(offlineResponse.status).toBe(400);
+    expect(offlineResponse.body.error.code).toBe("LOCKER_OFFLINE");
+
+    const noStockResponse = await request(app)
+      .post("/v1/rentals")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        lockerId: emptyLocker.lockerId,
+        durationMinutes: 60,
+        paymentSource: "WALLET",
+      });
+
+    expect(noStockResponse.status).toBe(400);
+    expect(noStockResponse.body.error.code).toBe("NO_CABLE_AVAILABLE");
+  });
+
+  it("returns null or the authenticated user's active rental", async () => {
+    const auth = await registerTestUser();
+
+    const emptyResponse = await request(app)
+      .get("/v1/rentals/active")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(emptyResponse.status).toBe(200);
+    expect(emptyResponse.body.data).toBeNull();
+
+    const locker = await createQrLocker();
+    await setWalletBalance(auth.userId, 100000);
+    const created = await request(app)
+      .post("/v1/rentals")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        lockerId: locker.lockerId,
+        compartmentId: locker.compartmentId,
+        durationMinutes: 120,
+        paymentSource: "WALLET",
+      });
+
+    const activeResponse = await request(app)
+      .get("/v1/rentals/active")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(activeResponse.status).toBe(200);
+    expect(activeResponse.body.data).toMatchObject({
+      id: created.body.data.id,
+      status: "ACTIVE",
+      locker: {
+        id: locker.lockerId,
+        name: locker.name,
+      },
+      compartmentNumber: 1,
+      estimatedFee: 50000,
+      fine: 0,
+      timeLeftSeconds: expect.any(Number),
+    });
+  });
+});
+
+describe("Milestone 6 active rental timer and notifications", () => {
+  it("requires auth and upserts push tokens for the authenticated user", async () => {
+    const unauthenticated = await request(app).post("/v1/devices/push-token").send({
+      token: "ExponentPushToken[missing-auth]",
+      platform: "ios",
+    });
+
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.body.error.code).toBe("UNAUTHENTICATED");
+
+    const auth = await registerTestUser();
+    const first = await request(app)
+      .post("/v1/devices/push-token")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        token: "ExponentPushToken[milestone6-upsert]",
+        platform: "ios",
+        deviceId: "device-001",
+      });
+
+    expect(first.status).toBe(200);
+    expect(first.body.data).toEqual({ success: true });
+
+    const second = await request(app)
+      .post("/v1/devices/push-token")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        token: "ExponentPushToken[milestone6-upsert]",
+        platform: "android",
+        deviceId: "device-002",
+      });
+
+    expect(second.status).toBe(200);
+
+    const tokens = await prisma.deviceToken.findMany({
+      where: { token: "ExponentPushToken[milestone6-upsert]" },
+    });
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toMatchObject({
+      userId: auth.userId,
+      platform: "android",
+      deviceId: "device-002",
+      revokedAt: null,
+    });
+  });
+
+  it("revokes the authenticated user's push token", async () => {
+    const auth = await registerTestUser();
+    await request(app)
+      .post("/v1/devices/push-token")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        token: "ExponentPushToken[milestone6-revoke]",
+        platform: "ios",
+      });
+
+    const response = await request(app)
+      .delete("/v1/devices/push-token")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        token: "ExponentPushToken[milestone6-revoke]",
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual({ success: true });
+
+    const token = await prisma.deviceToken.findUniqueOrThrow({
+      where: { token: "ExponentPushToken[milestone6-revoke]" },
+    });
+    expect(token.revokedAt).toBeInstanceOf(Date);
+  });
+
+  it("lists current user notifications newest first and marks one as read", async () => {
+    const auth = await registerTestUser();
+    const other = await registerTestUser();
+    const older = await prisma.notification.create({
+      data: {
+        userId: auth.userId,
+        type: "RENT_SUCCESS",
+        title: "Older",
+        message: "Older message",
+        createdAt: new Date("2026-05-01T01:00:00.000Z"),
+      },
+    });
+    const newer = await prisma.notification.create({
+      data: {
+        userId: auth.userId,
+        type: "RENT_REMINDER",
+        title: "Newer",
+        message: "Newer message",
+        createdAt: new Date("2026-05-01T02:00:00.000Z"),
+      },
+    });
+    await prisma.notification.create({
+      data: {
+        userId: other.userId,
+        type: "SYSTEM",
+        title: "Other",
+        message: "Other user message",
+      },
+    });
+
+    const list = await request(app)
+      .get("/v1/notifications")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(list.status).toBe(200);
+    expect(list.body.data.map((notification: { id: string }) => notification.id)).toEqual([
+      newer.id,
+      older.id,
+    ]);
+    expect(list.body.data[0]).toMatchObject({
+      type: "RENT_REMINDER",
+      title: "Newer",
+      message: "Newer message",
+      readAt: null,
+      relatedRentalId: null,
+      relatedTransactionId: null,
+    });
+
+    const read = await request(app)
+      .patch(`/v1/notifications/${newer.id}/read`)
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(read.status).toBe(200);
+    expect(read.body.data).toEqual({ success: true });
+
+    const updated = await prisma.notification.findUniqueOrThrow({
+      where: { id: newer.id },
+    });
+    expect(updated.readAt).toBeInstanceOf(Date);
+  });
+
+  it("prevents users from marking another user's notification as read", async () => {
+    const auth = await registerTestUser();
+    const other = await registerTestUser();
+    const notification = await prisma.notification.create({
+      data: {
+        userId: other.userId,
+        type: "SYSTEM",
+        title: "Other",
+        message: "Other user message",
+      },
+    });
+
+    const response = await request(app)
+      .patch(`/v1/notifications/${notification.id}/read`)
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("FORBIDDEN");
+  });
+
+  it("returns overdue active rentals as LATE using server time", async () => {
+    const auth = await registerTestUser();
+    const locker = await createQrLocker();
+    const rental = await prisma.rental.create({
+      data: {
+        userId: auth.userId,
+        lockerId: locker.lockerId,
+        compartmentId: locker.compartmentId,
+        cableUnitId: locker.cableUnitId,
+        status: "ACTIVE",
+        durationMinutes: 30,
+        startedAt: new Date(Date.now() - 60 * 60 * 1000),
+        dueAt: new Date(Date.now() - 30 * 60 * 1000),
+        rentFee: 12500,
+        totalFee: 12500,
+      },
+    });
+
+    const response = await request(app)
+      .get("/v1/rentals/active")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      id: rental.id,
+      status: "LATE",
+      timeLeftSeconds: 0,
+      fine: 0,
+    });
+
+    const updated = await prisma.rental.findUniqueOrThrow({
+      where: { id: rental.id },
+    });
+    expect(updated.status).toBe("LATE");
+  });
+
+  it("creates rental reminder and late warning notifications idempotently", async () => {
+    const { runRentalReminderSweep } = await import("./modules/rentals/reminders.js");
+    const auth = await registerTestUser();
+    const locker = await createQrLocker();
+    const rental = await prisma.rental.create({
+      data: {
+        userId: auth.userId,
+        lockerId: locker.lockerId,
+        compartmentId: locker.compartmentId,
+        cableUnitId: locker.cableUnitId,
+        status: "ACTIVE",
+        durationMinutes: 60,
+        startedAt: new Date("2026-05-01T00:00:00.000Z"),
+        dueAt: new Date("2026-05-01T01:00:00.000Z"),
+        rentFee: 25000,
+        totalFee: 25000,
+      },
+    });
+
+    await runRentalReminderSweep(new Date("2026-05-01T00:45:00.000Z"));
+    await runRentalReminderSweep(new Date("2026-05-01T00:55:00.000Z"));
+    await runRentalReminderSweep(new Date("2026-05-01T01:00:00.000Z"));
+    await runRentalReminderSweep(new Date("2026-05-01T01:01:00.000Z"));
+    await runRentalReminderSweep(new Date("2026-05-01T01:01:00.000Z"));
+
+    const notifications = await prisma.notification.findMany({
+      where: {
+        relatedRentalId: rental.id,
+        userId: auth.userId,
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
+
+    expect(notifications.map((notification) => notification.type)).toEqual([
+      "RENT_REMINDER",
+      "RENT_REMINDER",
+      "RENT_REMINDER",
+      "LATE_WARNING",
+    ]);
+    expect(notifications.map((notification) => notification.title)).toEqual([
+      "15 Minutes Left",
+      "5 Minutes Left",
+      "Rental Due Now",
+      "Rental Is Late",
+    ]);
+  });
+});
+
+describe("Milestone 7 return flow with fine payment", () => {
+  it("creates a return intent for an active rental and returns no fine before due time", async () => {
+    const auth = await registerTestUser();
+    await setWalletBalance(auth.userId, 100000);
+    const locker = await createReturnReadyLocker();
+    const rental = await createActiveRental(auth.userId, locker, {
+      dueAt: new Date(Date.now() + 30 * 60 * 1000),
+      startedAt: new Date(Date.now() - 30 * 60 * 1000),
+    });
+
+    const response = await request(app)
+      .post(`/v1/rentals/${rental.id}/return-intent`)
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({ lockerId: locker.lockerId });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      rentalId: rental.id,
+      returnLocation: locker.name,
+      compartmentNumber: 2,
+      fine: 0,
+      requiresFinePayment: false,
+      status: "READY_TO_RETURN",
+    });
+
+    const updatedRental = await prisma.rental.findUniqueOrThrow({ where: { id: rental.id } });
+    expect(updatedRental.status).toBe("RETURN_REQUESTED");
+  });
+
+  it("requires paying a late fine before return confirmation", async () => {
+    const auth = await registerTestUser();
+    await setWalletBalance(auth.userId, 100000);
+    const locker = await createReturnReadyLocker();
+    const rental = await createActiveRental(auth.userId, locker, {
+      dueAt: new Date(Date.now() - 45 * 60 * 1000),
+      startedAt: new Date(Date.now() - 75 * 60 * 1000),
+    });
+
+    const intent = await request(app)
+      .post(`/v1/rentals/${rental.id}/return-intent`)
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({ lockerId: locker.lockerId });
+
+    expect(intent.status).toBe(200);
+    expect(intent.body.data).toMatchObject({
+      fine: 12500,
+      requiresFinePayment: true,
+    });
+
+    const confirmBeforePayment = await request(app)
+      .post(`/v1/returns/${intent.body.data.returnSessionId}/confirm`)
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(confirmBeforePayment.status).toBe(400);
+    expect(confirmBeforePayment.body.error.code).toBe("RETURN_NOT_VERIFIED");
+
+    const payment = await request(app)
+      .post(`/v1/returns/${intent.body.data.returnSessionId}/pay-fine`)
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(payment.status).toBe(200);
+    expect(payment.body.data).toMatchObject({
+      fine: 12500,
+      paid: true,
+      walletBalance: 87500,
+    });
+    expect(payment.body.data.walletTransactionId).toEqual(expect.any(String));
+
+    const secondPayment = await request(app)
+      .post(`/v1/returns/${intent.body.data.returnSessionId}/pay-fine`)
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(secondPayment.status).toBe(200);
+    expect(secondPayment.body.data.walletTransactionId).toBe(payment.body.data.walletTransactionId);
+
+    const wallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: auth.userId } });
+    expect(wallet.balance).toBe(87500);
+  });
+
+  it("verifies a mock sensor return, clears active rental, and lists the completed transaction", async () => {
+    const auth = await registerTestUser();
+    await setWalletBalance(auth.userId, 100000);
+    const locker = await createReturnReadyLocker();
+    const rental = await createActiveRental(auth.userId, locker, {
+      dueAt: new Date(Date.now() + 30 * 60 * 1000),
+      startedAt: new Date(Date.now() - 30 * 60 * 1000),
+    });
+
+    const intent = await request(app)
+      .post(`/v1/rentals/${rental.id}/return-intent`)
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({ lockerId: locker.lockerId });
+
+    const confirm = await request(app)
+      .post(`/v1/returns/${intent.body.data.returnSessionId}/confirm`)
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(confirm.status).toBe(200);
+    expect(confirm.body.data).toMatchObject({
+      returnSessionId: intent.body.data.returnSessionId,
+      status: "WAITING_FOR_SENSOR",
+      compartmentNumber: 2,
+    });
+
+    const status = await request(app)
+      .get(`/v1/returns/${intent.body.data.returnSessionId}`)
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(status.status).toBe(200);
+    expect(status.body.data).toMatchObject({
+      id: intent.body.data.returnSessionId,
+      rentalId: rental.id,
+      status: "VERIFIED",
+      finalFee: 12500,
+      fine: 0,
+    });
+
+    const active = await request(app)
+      .get("/v1/rentals/active")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(active.status).toBe(200);
+    expect(active.body.data).toBeNull();
+
+    const returnedRental = await prisma.rental.findUniqueOrThrow({
+      where: { id: rental.id },
+      include: { cableUnit: true },
+    });
+    expect(returnedRental.status).toBe("RETURNED");
+    expect(returnedRental.returnedAt).toBeInstanceOf(Date);
+    expect(returnedRental.cableUnit.status).toBe("AVAILABLE");
+    expect(returnedRental.cableUnit.currentCompartmentId).toBe(locker.returnCompartmentId);
+
+    const returnCompartment = await prisma.compartment.findUniqueOrThrow({
+      where: { id: locker.returnCompartmentId },
+    });
+    expect(returnCompartment.status).toBe("AVAILABLE");
+    expect(returnCompartment.lastSensorState).toBe("CABLE_PRESENT");
+    expect(returnCompartment.currentCableUnitId).toBe(locker.cableUnitId);
+
+    const notification = await prisma.notification.findFirstOrThrow({
+      where: {
+        relatedRentalId: rental.id,
+        type: "RETURN_SUCCESS",
+        userId: auth.userId,
+      },
+    });
+    expect(notification.title).toBe("Return Success");
+
+    const transactions = await request(app)
+      .get("/v1/transactions")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(transactions.status).toBe(200);
+    expect(transactions.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: rental.id,
+          type: "RENTAL",
+          status: "RETURNED",
+          locationName: locker.name,
+          totalRentFee: 12500,
+          durationMinutes: 30,
+        }),
+      ]),
+    );
+  });
+
+  it("does not close a return session that times out before sensor verification", async () => {
+    const auth = await registerTestUser();
+    const locker = await createReturnReadyLocker();
+    const rental = await createActiveRental(auth.userId, locker, {
+      dueAt: new Date(Date.now() + 30 * 60 * 1000),
+      startedAt: new Date(Date.now() - 30 * 60 * 1000),
+    });
+
+    const returnSession = await prisma.returnSession.create({
+      data: {
+        rentalId: rental.id,
+        returnLockerId: locker.lockerId,
+        returnCompartmentId: locker.returnCompartmentId,
+        status: "WAITING_FOR_SENSOR",
+        openedAt: new Date(Date.now() - 10 * 60 * 1000),
+        sensorTimeoutAt: new Date(Date.now() - 60 * 1000),
+      },
+    });
+    await prisma.rental.update({
+      where: { id: rental.id },
+      data: { status: "WAITING_FOR_SENSOR" },
+    });
+
+    const response = await request(app)
+      .get(`/v1/returns/${returnSession.id}`)
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      id: returnSession.id,
+      rentalId: rental.id,
+      status: "TIMEOUT",
+      verifiedAt: null,
+    });
+
+    const updatedRental = await prisma.rental.findUniqueOrThrow({ where: { id: rental.id } });
+    expect(updatedRental.status).toBe("WAITING_FOR_SENSOR");
+    expect(updatedRental.returnedAt).toBeNull();
+  });
+});
+
 async function seedDemoData() {
   const { createHash } = await import("node:crypto");
   const user = await prisma.user.upsert({
@@ -534,6 +1216,12 @@ async function seedDemoData() {
       email: "mrjack@gmail.com",
       passwordHash: createHash("sha256").update("secret123").digest("hex"),
       status: "ACTIVE",
+    },
+  });
+
+  await prisma.rental.deleteMany({
+    where: {
+      userId: user.id,
     },
   });
 
@@ -653,6 +1341,15 @@ async function registerTestUser() {
   };
 }
 
+async function setWalletBalance(userId: string, balance: number) {
+  await prisma.wallet.update({
+    where: { userId },
+    data: {
+      balance,
+    },
+  });
+}
+
 async function createQrLocker(options?: { available?: boolean; status?: "ONLINE" | "OFFLINE" }) {
   const unique = `${Date.now()}-${testUserCounter}-${Math.random().toString(36).slice(2)}`;
   const lockerId = `lck_qr_${unique}`;
@@ -710,4 +1407,86 @@ async function createQrLocker(options?: { available?: boolean; status?: "ONLINE"
     lockerId,
     name: locker.name,
   };
+}
+
+async function createReturnReadyLocker() {
+  const unique = `${Date.now()}-${testUserCounter}-${Math.random().toString(36).slice(2)}`;
+  const lockerId = `lck_return_${unique}`;
+  const rentedCompartmentId = `cmp_return_rented_${unique}`;
+  const returnCompartmentId = `cmp_return_empty_${unique}`;
+  const cableUnitId = `cbl_return_${unique}`;
+
+  const locker = await prisma.locker.create({
+    data: {
+      id: lockerId,
+      name: `Return Locker ${unique}`,
+      address: "Jl. Ganesa No. 10, Bandung",
+      lat: -6.890538487737392,
+      lng: 107.6098075829657,
+      status: "ONLINE",
+      operationalHours: "24/7",
+      lastHeartbeatAt: new Date(),
+      compartments: {
+        create: [
+          {
+            id: rentedCompartmentId,
+            number: 1,
+            status: "RENTED",
+            lastSensorState: "CABLE_ABSENT",
+          },
+          {
+            id: returnCompartmentId,
+            number: 2,
+            status: "EMPTY",
+            lastSensorState: "CABLE_ABSENT",
+          },
+        ],
+      },
+    },
+  });
+
+  await prisma.cableUnit.create({
+    data: {
+      id: cableUnitId,
+      serialNumber: `COL-RETURN-${unique}`,
+      status: "RENTED",
+      specification: "Extension cable 4 outlet, 3 meter, 2500W",
+      isSniCertified: true,
+      hasOverloadProtection: true,
+      currentLockerId: null,
+      currentCompartmentId: null,
+    },
+  });
+
+  return {
+    cableUnitId,
+    lockerId,
+    name: locker.name,
+    rentedCompartmentId,
+    returnCompartmentId,
+  };
+}
+
+async function createActiveRental(
+  userId: string,
+  locker: Awaited<ReturnType<typeof createReturnReadyLocker>>,
+  input: {
+    dueAt: Date;
+    startedAt: Date;
+  },
+) {
+  return prisma.rental.create({
+    data: {
+      userId,
+      lockerId: locker.lockerId,
+      compartmentId: locker.rentedCompartmentId,
+      cableUnitId: locker.cableUnitId,
+      status: "ACTIVE",
+      durationMinutes: 30,
+      startedAt: input.startedAt,
+      dueAt: input.dueAt,
+      rentFee: 12500,
+      totalFee: 12500,
+    },
+  });
 }
