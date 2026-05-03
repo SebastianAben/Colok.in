@@ -1290,6 +1290,64 @@ describe("Milestone 8 transactions and notifications", () => {
   });
 });
 
+describe("Feedback API", () => {
+  it("requires authentication to submit feedback", async () => {
+    const response = await request(app).post("/v1/feedback").send({
+      category: "SUPPORT",
+      subject: "Need help",
+      message: "Please help me with a locker issue.",
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("UNAUTHENTICATED");
+  });
+
+  it("stores valid feedback for the authenticated user", async () => {
+    const auth = await registerTestUser();
+
+    const response = await request(app)
+      .post("/v1/feedback")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        category: "BUG_REPORT",
+        subject: "Scanner issue",
+        message: "The scanner could not read the locker QR at Labtek V.",
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data).toMatchObject({
+      category: "BUG_REPORT",
+      subject: "Scanner issue",
+      message: "The scanner could not read the locker QR at Labtek V.",
+      status: "OPEN",
+      createdAt: expect.any(String),
+    });
+
+    const feedback = await prisma.feedback.findUniqueOrThrow({
+      where: {
+        id: response.body.data.id,
+      },
+    });
+    expect(feedback.userId).toBe(auth.userId);
+  });
+
+  it("validates required feedback fields", async () => {
+    const auth = await registerTestUser();
+
+    const response = await request(app)
+      .post("/v1/feedback")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({
+        category: "SUPPORT",
+        subject: "",
+        message: "short",
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+});
+
 async function seedDemoData() {
   const { createHash } = await import("node:crypto");
   const user = await prisma.user.upsert({

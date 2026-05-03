@@ -76,7 +76,12 @@ export function AppHeader() {
         />
       </View>
       <View pointerEvents="none" style={styles.brandWrap}>
-        <Text style={styles.brand}>Colok.in</Text>
+        <Image
+          accessibilityIgnoresInvertColors
+          resizeMode="contain"
+          source={require("../../assets/images/logocolokin_text2.png")}
+          style={styles.brandLogo}
+        />
       </View>
       <View style={styles.avatar}>
         <Text style={styles.avatarText}>{initial}</Text>
@@ -267,10 +272,9 @@ export const styles = StyleSheet.create({
     height: 56,
     width: 56,
   },
-  brand: {
-    color: colors.text,
-    fontSize: 20,
-    fontWeight: "700",
+  brandLogo: {
+    height: 28,
+    width: 116,
   },
   brandWrap: {
     alignItems: "center",

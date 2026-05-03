@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -31,6 +32,7 @@ export function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
 
   async function submit() {
     setError(null);
@@ -60,7 +62,14 @@ export function LoginScreen() {
         onChangeText={setEmailOrPhone}
         value={emailOrPhone}
       />
-      <FormField label="Password" onChangeText={setPassword} secureTextEntry value={password} />
+      <FormField
+        label="Password"
+        onChangeText={setPassword}
+        onToggleSecureText={() => setPasswordVisible((current) => !current)}
+        secureTextEntry={!passwordVisible}
+        secureToggleIcon={passwordVisible ? "eye-off-outline" : "eye-outline"}
+        value={password}
+      />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <Pressable
         accessibilityRole="button"
@@ -85,10 +94,19 @@ export function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
   const [phone, setPhone] = useState("");
 
   async function submit() {
     setError(null);
+
+    if (password !== confirmPassword) {
+      setError("Password confirmation does not match.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -123,7 +141,22 @@ export function RegisterScreen() {
         onChangeText={setEmail}
         value={email}
       />
-      <FormField label="Password" onChangeText={setPassword} secureTextEntry value={password} />
+      <FormField
+        label="Password"
+        onChangeText={setPassword}
+        onToggleSecureText={() => setPasswordVisible((current) => !current)}
+        secureTextEntry={!passwordVisible}
+        secureToggleIcon={passwordVisible ? "eye-off-outline" : "eye-outline"}
+        value={password}
+      />
+      <FormField
+        label="Confirm Password"
+        onChangeText={setConfirmPassword}
+        onToggleSecureText={() => setConfirmPasswordVisible((current) => !current)}
+        secureTextEntry={!confirmPasswordVisible}
+        secureToggleIcon={confirmPasswordVisible ? "eye-off-outline" : "eye-outline"}
+        value={confirmPassword}
+      />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <Pressable
         accessibilityRole="button"
@@ -162,9 +195,19 @@ function AuthShell({
       >
         <View style={styles.brandRow}>
           <View style={styles.brandIcon}>
-            <Ionicons name="flash" size={22} color={colors.primary} />
+            <Image
+              accessibilityIgnoresInvertColors
+              resizeMode="contain"
+              source={require("../../assets/images/logocolokin.png")}
+              style={styles.brandIconImage}
+            />
           </View>
-          <Text style={styles.brandText}>Colok.in</Text>
+          <Image
+            accessibilityIgnoresInvertColors
+            resizeMode="contain"
+            source={require("../../assets/images/logocolokin_text2.png")}
+            style={styles.brandTextImage}
+          />
         </View>
         <View style={styles.formCard}>
           <Text style={styles.title}>{title}</Text>
@@ -184,19 +227,39 @@ function AuthShell({
 
 function FormField({
   label,
+  onToggleSecureText,
+  secureToggleIcon,
   ...inputProps
 }: {
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
   keyboardType?: "default" | "email-address" | "phone-pad";
   label: string;
   onChangeText: (value: string) => void;
+  onToggleSecureText?: () => void;
   secureTextEntry?: boolean;
+  secureToggleIcon?: keyof typeof Ionicons.glyphMap;
   value: string;
 }) {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput placeholderTextColor={colors.textDisabled} style={styles.input} {...inputProps} />
+      <View style={styles.inputWrap}>
+        <TextInput
+          placeholderTextColor={colors.textDisabled}
+          style={[styles.input, onToggleSecureText && styles.inputWithIcon]}
+          {...inputProps}
+        />
+        {onToggleSecureText && secureToggleIcon ? (
+          <Pressable
+            accessibilityLabel={inputProps.secureTextEntry ? "Show password" : "Hide password"}
+            accessibilityRole="button"
+            onPress={onToggleSecureText}
+            style={styles.passwordToggle}
+          >
+            <Ionicons name={secureToggleIcon} size={20} color={colors.textSecondary} />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -219,18 +282,21 @@ const styles = StyleSheet.create({
   },
   brandIcon: {
     alignItems: "center",
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: "transparent",
     borderColor: colors.border,
     borderRadius: radii.pill,
-    borderWidth: 1,
-    height: 44,
+    borderWidth: 0,
+    height: 58,
     justifyContent: "center",
-    width: 44,
+    width: 58,
   },
-  brandText: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: "800",
+  brandIconImage: {
+    height: 58,
+    width: 58,
+  },
+  brandTextImage: {
+    height: 34,
+    width: 126,
   },
   formCard: {
     backgroundColor: colors.surface,
@@ -270,6 +336,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     minHeight: 50,
     paddingHorizontal: 14,
+  },
+  inputWrap: {
+    position: "relative",
+  },
+  inputWithIcon: {
+    paddingRight: 48,
+  },
+  passwordToggle: {
+    alignItems: "center",
+    bottom: 0,
+    justifyContent: "center",
+    position: "absolute",
+    right: 4,
+    top: 0,
+    width: 44,
   },
   errorText: {
     color: colors.danger,

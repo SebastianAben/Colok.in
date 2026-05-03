@@ -11,15 +11,7 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <AuthGate>
-          <Stack screenOptions={{ animation: "none", headerShown: false }}>
-            <Stack.Screen name="top-up" options={{ animation: "slide_from_bottom" }} />
-            <Stack.Screen name="return/review" options={{ animation: "slide_from_right" }} />
-            <Stack.Screen name="return/instruction" options={{ animation: "slide_from_right" }} />
-            <Stack.Screen name="return/success" options={{ animation: "slide_from_right" }} />
-            <Stack.Screen name="return-review" options={{ animation: "slide_from_right" }} />
-            <Stack.Screen name="return-instruction" options={{ animation: "slide_from_right" }} />
-            <Stack.Screen name="return-success" options={{ animation: "slide_from_right" }} />
-          </Stack>
+          <Stack screenOptions={{ animation: "none", headerShown: false }} />
         </AuthGate>
       </AuthProvider>
     </QueryClientProvider>

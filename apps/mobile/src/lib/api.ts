@@ -8,6 +8,8 @@ import type {
   CreateTopUpRequest,
   CreateTopUpResponse,
   ConfirmReturnResponse,
+  CreateFeedbackRequest,
+  CreateFeedbackResponse,
   LockerListItem,
   MeResponse,
   QrValidateRequest,
@@ -120,6 +122,14 @@ export function logoutRequest(token: string | null) {
 
 export function getMeRequest(token: string) {
   return apiRequest<MeResponse>("/me", {
+    token,
+  });
+}
+
+export function createFeedbackRequest(token: string, input: CreateFeedbackRequest) {
+  return apiRequest<CreateFeedbackResponse>("/feedback", {
+    body: input,
+    method: "POST",
     token,
   });
 }

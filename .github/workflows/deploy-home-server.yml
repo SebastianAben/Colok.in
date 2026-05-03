@@ -1,0 +1,139 @@
+name: Deploy Home Server
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
+
+permissions:
+  contents: read
+
+concurrency:
+  group: colokin-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy backend
+    runs-on: [self-hosted, Linux, X64, docker, colokin]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select environment
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            target="${{ inputs.environment }}"
+          elif [ "${GITHUB_REF_NAME}" = "main" ]; then
+            target="prod"
+          else
+            target="dev"
+          fi
+
+          case "$target" in
+            dev)
+              {
+                echo "DEPLOY_ENV=dev"
+                echo "DEPLOY_PATH=/home/froztbitez/web-server/colokin/dev"
+                echo "ENV_FILE=.env.server.dev"
+                echo "SEED_AFTER_MIGRATE=true"
+                echo "PUBLIC_HEALTH_URL=https://api-dev.colokin.albern.space/v1/health"
+              } >> "$GITHUB_ENV"
+              ;;
+            prod)
+              {
+                echo "DEPLOY_ENV=prod"
+                echo "DEPLOY_PATH=/home/froztbitez/web-server/colokin/prod"
+                echo "ENV_FILE=.env.server.prod"
+                echo "SEED_AFTER_MIGRATE=false"
+                echo "PUBLIC_HEALTH_URL=https://api.colokin.albern.space/v1/health"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Unknown deploy target: $target" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Sync deployment files
+        run: |
+          case "$DEPLOY_PATH" in
+            /home/froztbitez/web-server/colokin/dev|/home/froztbitez/web-server/colokin/prod) ;;
+            *)
+              echo "Refusing to sync unexpected DEPLOY_PATH: $DEPLOY_PATH" >&2
+              exit 1
+              ;;
+          esac
+
+          mkdir -p "$DEPLOY_PATH"
+          find "$DEPLOY_PATH" -mindepth 1 \
+            ! -name '.env.server.dev' \
+            ! -name '.env.server.prod' \
+            ! -name 'backups' \
+            ! -path "$DEPLOY_PATH/backups/*" \
+            -exec rm -rf {} +
+
+          tar \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='dist' \
+            --exclude='coverage' \
+            --exclude='.turbo' \
+            --exclude='.expo' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            -czf /tmp/colokin-release.tgz .
+          tar -xzf /tmp/colokin-release.tgz -C "$DEPLOY_PATH"
+          rm /tmp/colokin-release.tgz
+
+          if [ ! -f "$DEPLOY_PATH/$ENV_FILE" ]; then
+            echo "Missing $DEPLOY_PATH/$ENV_FILE. Copy the matching example file and fill secrets on the server." >&2
+            exit 1
+          fi
+
+      - name: Build and deploy stack
+        run: |
+          cd "$DEPLOY_PATH"
+          set -a
+          . "$ENV_FILE"
+          set +a
+
+          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml config >/dev/null
+          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml build api migrate seed
+          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml up -d --wait postgres mosquitto
+
+          mkdir -p backups
+          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml exec -T postgres \
+            sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+            > "backups/predeploy-${DEPLOY_ENV}-$(date +%Y%m%d%H%M%S).sql"
+
+          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml run --rm migrate
+
+          if [ "$SEED_AFTER_MIGRATE" = "true" ]; then
+            docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml run --rm seed
+          fi
+
+          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml up -d --wait api
+          docker image prune -f
+
+      - name: Smoke test
+        run: |
+          cd "$DEPLOY_PATH"
+          set -a
+          . "$ENV_FILE"
+          set +a
+
+          curl --fail --show-error --silent "http://127.0.0.1:${API_HOST_PORT}/v1/health"
+          curl --fail --show-error --silent "$PUBLIC_HEALTH_URL"

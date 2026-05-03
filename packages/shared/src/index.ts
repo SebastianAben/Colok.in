@@ -40,6 +40,27 @@ export type MeResponse = AuthUser & {
   activeRentalId: string | null;
 };
 
+export const FEEDBACK_CATEGORIES = ["BUG_REPORT", "FEATURE_REQUEST", "SUPPORT", "OTHER"] as const;
+export type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number];
+
+export const FEEDBACK_STATUSES = ["OPEN", "REVIEWED", "CLOSED"] as const;
+export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
+
+export type CreateFeedbackRequest = {
+  category: FeedbackCategory;
+  subject: string;
+  message: string;
+};
+
+export type CreateFeedbackResponse = {
+  id: string;
+  category: FeedbackCategory;
+  subject: string;
+  message: string;
+  status: FeedbackStatus;
+  createdAt: string;
+};
+
 export type WalletSummary = {
   balance: number;
   currency: typeof CURRENCY_IDR;

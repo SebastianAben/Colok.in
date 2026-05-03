@@ -8,6 +8,7 @@ import type {
   TransactionListItem,
 } from "@colokin/shared";
 import { router, useLocalSearchParams } from "expo-router";
+import type { Href } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,7 +16,9 @@ import {
   Pressable,
   RefreshControl,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import {
@@ -29,10 +32,11 @@ import {
   StatusBadge,
   SuccessScreen,
 } from "./milestone-ui";
-import { demoLocker, settingsItems } from "../data/demo";
+import { demoLocker } from "../data/demo";
 import { useAuth } from "../auth/auth-context";
 import {
   ApiClientError,
+  createFeedbackRequest,
   confirmReturnRequest,
   createRentalQuoteRequest,
   createRentalRequest,
@@ -141,6 +145,46 @@ type TransactionHistoryItem = Omit<Partial<TransactionListItem>, "type"> & {
   totalRentFee?: number;
   type?: "RENTAL" | "TOP_UP" | "RENT_PAYMENT" | "FINE_PAYMENT" | "REFUND" | string;
 };
+
+const settingsMenuItems = [
+  {
+    description: "Notification preferences and app behavior.",
+    href: "/settings/application",
+    icon: "options-outline",
+    title: "Application Settings",
+  },
+  {
+    description: "Get help with renting, returning, and wallet top ups.",
+    href: "/settings/help",
+    icon: "help-circle-outline",
+    title: "Help & Support",
+  },
+  {
+    description: "Read MVP usage, safety, and wallet policies.",
+    href: "/settings/terms",
+    icon: "document-text-outline",
+    title: "Terms & Policies",
+  },
+  {
+    description: "Submit feedback directly to the Colok.in team.",
+    href: "/settings/feedback",
+    icon: "chatbubble-ellipses-outline",
+    title: "Feedback",
+  },
+  {
+    description: "Learn about the Colok.in smart locker MVP.",
+    href: "/settings/about",
+    icon: "information-circle-outline",
+    title: "About Us",
+  },
+] as const;
+
+const feedbackCategories = [
+  { label: "Bug", value: "BUG_REPORT" },
+  { label: "Feature", value: "FEATURE_REQUEST" },
+  { label: "Support", value: "SUPPORT" },
+  { label: "Other", value: "OTHER" },
+] as const;
 
 function labelFromTransactionType(type?: string | null) {
   switch (type) {
@@ -369,27 +413,29 @@ export function HomeScreen() {
         </View>
       </View>
 
-      <Card style={screenStyles.activeCard}>
-        <View style={screenStyles.sheetHeader}>
-          <Text style={screenStyles.cardTitle}>Rent Status</Text>
-          <StatusBadge
-            label={
-              activeRental
-                ? activeRentalIsLate
-                  ? "LATE RENTAL"
-                  : "ACTIVE RENTAL"
-                : "NO ACTIVE RENTAL"
-            }
-            tone={activeRentalIsLate ? "success" : "primary"}
-          />
+      {activeRentalLoading && !activeRental ? (
+        <View style={screenStyles.inlineStatus}>
+          <ActivityIndicator color={colors.accent} />
+          <Text style={screenStyles.cardBody}>Loading rent status...</Text>
         </View>
-        {activeRentalLoading ? (
-          <View style={screenStyles.inlineStatus}>
-            <ActivityIndicator color={colors.accent} />
-            <Text style={screenStyles.cardBody}>Loading rent status...</Text>
+      ) : null}
+
+      {activeRental ? (
+        <Card style={screenStyles.activeCard}>
+          <View style={screenStyles.sheetHeader}>
+            <Text style={screenStyles.cardTitle}>Rent Status</Text>
+            <StatusBadge
+              label={activeRentalIsLate ? "LATE RENTAL" : "ACTIVE RENTAL"}
+              tone={activeRentalIsLate ? "success" : "primary"}
+            />
           </View>
-        ) : activeRental ? (
-          <>
+          {activeRentalLoading ? (
+            <View style={screenStyles.inlineStatus}>
+              <ActivityIndicator color={colors.accent} />
+              <Text style={screenStyles.cardBody}>Refreshing rent status...</Text>
+            </View>
+          ) : null}
+          <View style={screenStyles.activeRentalBody}>
             <Text style={screenStyles.cardBody}>
               {activeRental.locker.name} - Locker {activeRental.compartmentNumber}
             </Text>
@@ -447,16 +493,11 @@ export function HomeScreen() {
                 ) : null}
               </>
             ) : null}
-          </>
-        ) : (
-          <>
-            <Text style={screenStyles.cardBody}>
-              {activeRentalError ?? "You do not have an active rental yet."}
-            </Text>
-            <PrimaryButton label="Rent Extension Cable" onPress={() => router.push("/locations")} />
-          </>
-        )}
-      </Card>
+          </View>
+        </Card>
+      ) : activeRentalError ? (
+        <Text style={screenStyles.errorText}>{activeRentalError}</Text>
+      ) : null}
 
       <View style={screenStyles.promo}>
         <View style={screenStyles.promoBadge}>
@@ -479,8 +520,8 @@ export function HomeScreen() {
       </Card>
 
       <View style={screenStyles.helpGrid}>
-        <HelpCard icon="wallet-outline" title="How to Top Up Colok.in Credit" />
-        <HelpCard icon="flash-outline" title="How to Rent Extension Cable" />
+        <HelpCard href="/help/top-up" icon="wallet-outline" title="How to Top Up Colok.in Credit" />
+        <HelpCard href="/help/rent" icon="flash-outline" title="How to Rent Extension Cable" />
       </View>
     </ScreenShell>
   );
@@ -855,6 +896,7 @@ export function NotificationsScreen() {
 export function SettingsScreen() {
   const { logout, me } = useAuth();
   const initial = me?.name.charAt(0).toUpperCase() ?? "C";
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
 
   return (
     <ScreenShell activeTab="Settings" title="Settings">
@@ -870,15 +912,308 @@ export function SettingsScreen() {
           </View>
         </View>
       </Card>
-      <Card>
-        {settingsItems.map((item) => (
-          <Pressable key={item} style={screenStyles.menuItem}>
-            <Text style={screenStyles.menuText}>{item}</Text>
+      <Card style={screenStyles.menuCard}>
+        {settingsMenuItems.map((item, index) => (
+          <Pressable
+            accessibilityRole="button"
+            key={item.title}
+            onPress={() => router.push(item.href)}
+            style={[
+              screenStyles.menuItem,
+              index === settingsMenuItems.length - 1 && screenStyles.menuItemLast,
+            ]}
+          >
+            <View style={screenStyles.menuIcon}>
+              <Ionicons name={item.icon} size={20} color={colors.primary} />
+            </View>
+            <View style={screenStyles.flexText}>
+              <Text style={screenStyles.menuText}>{item.title}</Text>
+              <Text style={screenStyles.menuDescription}>{item.description}</Text>
+            </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
           </Pressable>
         ))}
       </Card>
-      <SecondaryButton label="Log Out" onPress={() => void logout()} />
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setConfirmingLogout(true)}
+        style={screenStyles.logoutButton}
+      >
+        <Ionicons name="log-out-outline" size={18} color={colors.text} />
+        <Text style={screenStyles.logoutButtonText}>Log Out</Text>
+      </Pressable>
+      {confirmingLogout ? (
+        <Card style={screenStyles.confirmCard}>
+          <Text style={screenStyles.cardTitle}>Log out of Colok.in?</Text>
+          <Text style={screenStyles.cardBody}>
+            You will need to log in again before renting or topping up your wallet.
+          </Text>
+          <View style={screenStyles.confirmActions}>
+            <SecondaryButton label="Cancel" onPress={() => setConfirmingLogout(false)} />
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void logout()}
+              style={screenStyles.logoutConfirmButton}
+            >
+              <Text style={screenStyles.logoutButtonText}>Log Out</Text>
+            </Pressable>
+          </View>
+        </Card>
+      ) : null}
+    </ScreenShell>
+  );
+}
+
+export function ApplicationSettingsScreen() {
+  const [pushReminders, setPushReminders] = useState(true);
+  const [biometricUnlock, setBiometricUnlock] = useState(false);
+  const [compactMode, setCompactMode] = useState(false);
+
+  return (
+    <ScreenShell
+      activeTab="Settings"
+      title="Application Settings"
+      subtitle="Adjust local preferences for the demo app."
+    >
+      <SettingsToggleRow
+        description="Keep local reminders active before rentals are due."
+        enabled={pushReminders}
+        icon="notifications-outline"
+        label="Rental reminders"
+        onChange={setPushReminders}
+      />
+      <SettingsToggleRow
+        description="Demo placeholder for biometric confirmation."
+        enabled={biometricUnlock}
+        icon="finger-print-outline"
+        label="Biometric confirmation"
+        onChange={setBiometricUnlock}
+      />
+      <SettingsToggleRow
+        description="Use tighter spacing for denser transaction lists."
+        enabled={compactMode}
+        icon="contract-outline"
+        label="Compact mode"
+        onChange={setCompactMode}
+      />
+    </ScreenShell>
+  );
+}
+
+export function HelpSupportScreen() {
+  return (
+    <ScreenShell
+      activeTab="Settings"
+      title="Help & Support"
+      subtitle="Quick answers for common Colok.in demo flows."
+    >
+      <InfoSection
+        icon="flash-outline"
+        title="Rental support"
+        body="Scan a locker QR, choose duration, confirm wallet payment, and take the extension cable from the opened compartment."
+      />
+      <InfoSection
+        icon="return-down-back-outline"
+        title="Return support"
+        body="Tap Return from an active rental, follow the assigned compartment instruction, and wait until the mock sensor verifies the cable."
+      />
+      <InfoSection
+        icon="wallet-outline"
+        title="Wallet support"
+        body="Use Top Up to generate a QR payment code. In this MVP, confirming the dummy QR credits your wallet immediately."
+      />
+    </ScreenShell>
+  );
+}
+
+export function TermsPoliciesScreen() {
+  return (
+    <ScreenShell
+      activeTab="Settings"
+      title="Terms & Policies"
+      subtitle="MVP policy summary for demo usage."
+    >
+      <InfoSection
+        icon="shield-checkmark-outline"
+        title="Rental responsibility"
+        body="Users are responsible for returning the same extension cable before the rental time ends."
+      />
+      <InfoSection
+        icon="time-outline"
+        title="Late returns"
+        body="A 15-minute grace tolerance applies before late fines are calculated by the backend."
+      />
+      <InfoSection
+        icon="card-outline"
+        title="Wallet balance"
+        body="MVP wallet top ups use dummy QR confirmation and do not connect to a production payment gateway."
+      />
+    </ScreenShell>
+  );
+}
+
+export function FeedbackScreen() {
+  const { accessToken } = useAuth();
+  const [category, setCategory] = useState<(typeof feedbackCategories)[number]["value"]>("SUPPORT");
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const [subject, setSubject] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  async function submitFeedback() {
+    if (!accessToken) {
+      setError("Please log in before submitting feedback.");
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+
+    if (subject.trim().length < 3 || message.trim().length < 10) {
+      setError("Please enter a subject and at least 10 characters of feedback.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await createFeedbackRequest(accessToken, {
+        category,
+        subject,
+        message,
+      });
+      setSubject("");
+      setMessage("");
+      setSuccess(`Feedback submitted. Ticket ${response.id.slice(-6).toUpperCase()} is open.`);
+    } catch (submitError) {
+      setError(messageFrom(submitError));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <ScreenShell
+      activeTab="Settings"
+      title="Feedback"
+      subtitle="Send feedback directly to the Colok.in team."
+    >
+      <Card style={screenStyles.feedbackCard}>
+        <Text style={screenStyles.fieldLabel}>Category</Text>
+        <View style={screenStyles.segmentRow}>
+          {feedbackCategories.map((item) => {
+            const selected = item.value === category;
+            return (
+              <Pressable
+                accessibilityRole="button"
+                key={item.value}
+                onPress={() => setCategory(item.value)}
+                style={[screenStyles.segmentButton, selected && screenStyles.segmentButtonActive]}
+              >
+                <Text
+                  style={[screenStyles.segmentText, selected && screenStyles.segmentTextActive]}
+                >
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={screenStyles.fieldLabel}>Subject</Text>
+        <TextInput
+          onChangeText={setSubject}
+          placeholder="What should we look at?"
+          placeholderTextColor={colors.textDisabled}
+          style={screenStyles.textInput}
+          value={subject}
+        />
+        <Text style={screenStyles.fieldLabel}>Message</Text>
+        <TextInput
+          multiline
+          onChangeText={setMessage}
+          placeholder="Tell us what happened or what you need."
+          placeholderTextColor={colors.textDisabled}
+          style={[screenStyles.textInput, screenStyles.textArea]}
+          textAlignVertical="top"
+          value={message}
+        />
+        {error ? <Text style={screenStyles.errorText}>{error}</Text> : null}
+        {success ? <Text style={screenStyles.successText}>{success}</Text> : null}
+        <PrimaryButton
+          label={submitting ? "Submitting..." : "Submit Feedback"}
+          onPress={() => void submitFeedback()}
+        />
+      </Card>
+    </ScreenShell>
+  );
+}
+
+export function AboutUsScreen() {
+  return (
+    <ScreenShell
+      activeTab="Settings"
+      title="About Us"
+      subtitle="Colok.in smart locker MVP for extension cable rentals."
+    >
+      <InfoSection
+        icon="battery-charging-outline"
+        title="What Colok.in does"
+        body="Colok.in helps students and flexible workers rent SNI-ready extension cables from smart lockers in public spaces."
+      />
+      <InfoSection
+        icon="hardware-chip-outline"
+        title="MVP technology"
+        body="The app connects Expo mobile, Express API, PostgreSQL, Firebase notification paths, and mock MQTT IoT flows."
+      />
+      <InfoSection
+        icon="location-outline"
+        title="Demo location"
+        body="The current demo uses Labtek V ITB with mock locker stock, QR validation, wallet payment, and sensor return verification."
+      />
+    </ScreenShell>
+  );
+}
+
+export function TopUpGuideScreen() {
+  return (
+    <ScreenShell activeTab="Home" title="How to Top Up" subtitle="Add Colok.in wallet balance.">
+      <InfoSection
+        icon="create-outline"
+        title="Enter amount"
+        body="Open Top Up from Home, enter the amount in Rupiah, then generate the MVP QR payment code."
+      />
+      <InfoSection
+        icon="qr-code-outline"
+        title="Confirm QR"
+        body="Use the confirm action or scanner flow to validate the dummy QR payload created by the backend."
+      />
+      <InfoSection
+        icon="checkmark-circle-outline"
+        title="Balance updates"
+        body="After confirmation, your wallet balance, Transactions, and Notifications refresh with the top up record."
+      />
+    </ScreenShell>
+  );
+}
+
+export function RentGuideScreen() {
+  return (
+    <ScreenShell activeTab="Home" title="How to Rent" subtitle="Rent an extension cable.">
+      <InfoSection
+        icon="location-outline"
+        title="Find a locker"
+        body="Open Rent Location and choose an online Colok.in locker with available cable stock."
+      />
+      <InfoSection
+        icon="scan-outline"
+        title="Scan QR"
+        body="Scan the locker QR, pick a rental duration, and review the wallet charge before confirming."
+      />
+      <InfoSection
+        icon="return-down-back-outline"
+        title="Return on time"
+        body="Use the active Rent Status card to start return, place the cable in the assigned compartment, and wait for verification."
+      />
     </ScreenShell>
   );
 }
@@ -1426,13 +1761,84 @@ export function ReturnSuccessScreen() {
   );
 }
 
-function HelpCard({ icon, title }: { icon: keyof typeof Ionicons.glyphMap; title: string }) {
+function HelpCard({
+  href,
+  icon,
+  title,
+}: {
+  href: Href;
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+}) {
   return (
-    <Card style={screenStyles.helpCard}>
-      <View style={screenStyles.iconCircle}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={() => router.push(href)}
+      style={screenStyles.helpCardPressable}
+    >
+      <Card style={screenStyles.helpCard}>
+        <View style={screenStyles.iconCircle}>
+          <Ionicons name={icon} size={20} color={colors.primary} />
+        </View>
+        <Text style={screenStyles.helpTitle}>{title}</Text>
+      </Card>
+    </Pressable>
+  );
+}
+
+function InfoSection({
+  body,
+  icon,
+  title,
+}: {
+  body: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+}) {
+  return (
+    <Card style={screenStyles.infoSection}>
+      <View style={screenStyles.locationCardHeader}>
+        <View style={screenStyles.iconCircle}>
+          <Ionicons name={icon} size={20} color={colors.primary} />
+        </View>
+        <View style={screenStyles.flexText}>
+          <Text style={screenStyles.cardTitle}>{title}</Text>
+          <Text style={screenStyles.cardBody}>{body}</Text>
+        </View>
+      </View>
+    </Card>
+  );
+}
+
+function SettingsToggleRow({
+  description,
+  enabled,
+  icon,
+  label,
+  onChange,
+}: {
+  description: string;
+  enabled: boolean;
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <Card style={screenStyles.settingToggleCard}>
+      <View style={screenStyles.menuIcon}>
         <Ionicons name={icon} size={20} color={colors.primary} />
       </View>
-      <Text style={screenStyles.helpTitle}>{title}</Text>
+      <View style={screenStyles.flexText}>
+        <Text style={screenStyles.menuText}>{label}</Text>
+        <Text style={screenStyles.menuDescription}>{description}</Text>
+      </View>
+      <Switch
+        ios_backgroundColor={colors.surfaceMuted}
+        onValueChange={onChange}
+        thumbColor={enabled ? colors.accent : colors.textMuted}
+        trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
+        value={enabled}
+      />
     </Card>
   );
 }
@@ -1494,6 +1900,9 @@ const screenStyles = StyleSheet.create({
   activeCard: {
     borderLeftColor: colors.accent,
     borderLeftWidth: 5,
+    gap: 16,
+  },
+  activeRentalBody: {
     gap: 16,
   },
   balanceAmount: {
@@ -1585,6 +1994,7 @@ const screenStyles = StyleSheet.create({
     borderRadius: radii.pill,
     height: 38,
     justifyContent: "center",
+    marginTop: 8,
     width: 38,
   },
   errorText: {
@@ -1612,10 +2022,21 @@ const screenStyles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
+  feedbackCard: {
+    gap: 12,
+  },
+  fieldLabel: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "800",
+  },
   helpCard: {
     flex: 1,
     gap: 14,
     minHeight: 132,
+  },
+  helpCardPressable: {
+    flex: 1,
   },
   helpGrid: {
     flexDirection: "row",
@@ -1625,6 +2046,9 @@ const screenStyles = StyleSheet.create({
     color: colors.text,
     fontSize: 16,
     fontWeight: "800",
+  },
+  infoSection: {
+    gap: 0,
   },
   iconCircle: {
     alignItems: "center",
@@ -1722,8 +2146,29 @@ const screenStyles = StyleSheet.create({
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
     flexDirection: "row",
+    gap: 12,
     justifyContent: "space-between",
     paddingVertical: 16,
+  },
+  menuCard: {
+    paddingVertical: 2,
+  },
+  menuDescription: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 17,
+  },
+  menuIcon: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radii.pill,
+    height: 38,
+    justifyContent: "center",
+    width: 38,
+  },
+  menuItemLast: {
+    borderBottomWidth: 0,
   },
   menuText: {
     color: colors.text,
@@ -1739,11 +2184,95 @@ const screenStyles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
   },
+  confirmActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  confirmCard: {
+    borderColor: `${colors.danger}66`,
+    gap: 14,
+  },
   modalTitle: {
     color: colors.text,
     fontSize: 24,
     fontWeight: "900",
     lineHeight: 30,
+  },
+  logoutButton: {
+    alignItems: "center",
+    backgroundColor: colors.danger,
+    borderRadius: radii.button,
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "center",
+    minHeight: 48,
+    paddingHorizontal: 18,
+  },
+  logoutButtonText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  logoutConfirmButton: {
+    alignItems: "center",
+    backgroundColor: colors.danger,
+    borderRadius: radii.button,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 48,
+    paddingHorizontal: 18,
+  },
+  segmentButton: {
+    alignItems: "center",
+    borderColor: colors.border,
+    borderRadius: radii.button,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 40,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  segmentButtonActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  segmentRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  segmentText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  segmentTextActive: {
+    color: colors.text,
+  },
+  settingToggleCard: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+  },
+  successText: {
+    color: colors.success,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 18,
+  },
+  textArea: {
+    minHeight: 130,
+    paddingTop: 14,
+  },
+  textInput: {
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.border,
+    borderRadius: radii.button,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: 15,
+    minHeight: 48,
+    paddingHorizontal: 14,
   },
   notificationRow: {
     alignItems: "flex-start",
