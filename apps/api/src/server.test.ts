@@ -30,8 +30,11 @@ afterAll(async () => {
 
 describe("Milestone 2 backend foundation", () => {
   it("registers a user with a wallet and returns tokens", async () => {
-    const email = `milestone2-${Date.now()}@example.com`;
-    const phone = `+62812${Date.now().toString().slice(-9)}`;
+    const unique = uniqueTestSuffix();
+    const email = `milestone2-${unique}@example.com`;
+    const phone = `+62812${Date.now().toString().slice(-7)}${testUserCounter
+      .toString()
+      .padStart(2, "0")}`;
 
     const response = await request(app).post("/v1/auth/register").send({
       name: "Milestone Two",
@@ -614,6 +617,7 @@ describe("Milestone 5 rent flow with mock IoT", () => {
         },
       }),
     ).resolves.toMatchObject({
+      relatedTransactionId: expect.any(String),
       type: "RENT_SUCCESS",
     });
 
@@ -1198,6 +1202,94 @@ describe("Milestone 7 return flow with fine payment", () => {
   });
 });
 
+describe("Milestone 8 transactions and notifications", () => {
+  it("lists returned rentals and successful wallet transactions newest first for the authenticated user", async () => {
+    const auth = await registerTestUser();
+    const other = await registerTestUser();
+    const locker = await createReturnReadyLocker();
+    const rental = await createActiveRental(auth.userId, locker, {
+      dueAt: new Date("2026-05-01T02:00:00.000Z"),
+      startedAt: new Date("2026-05-01T01:00:00.000Z"),
+    });
+    await prisma.rental.update({
+      where: { id: rental.id },
+      data: {
+        returnedAt: new Date("2026-05-01T03:00:00.000Z"),
+        status: "RETURNED",
+      },
+    });
+
+    const topUp = await request(app)
+      .post("/v1/wallet/topups")
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({ amount: 100000 });
+    const confirmedTopUp = await request(app)
+      .post(`/v1/wallet/topups/${topUp.body.data.topUpId}/confirm`)
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({ dummyQrPayload: topUp.body.data.dummyQrPayload });
+
+    await prisma.walletTransaction.create({
+      data: {
+        amount: 75000,
+        direction: "CREDIT",
+        referenceId: "other_topup_milestone_8",
+        referenceType: "TOP_UP",
+        status: "SUCCESS",
+        type: "TOP_UP",
+        wallet: {
+          connect: {
+            userId: other.userId,
+          },
+        },
+      },
+    });
+
+    const response = await request(app)
+      .get("/v1/transactions")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: rental.id,
+          type: "RENTAL",
+          status: "RETURNED",
+          locationName: locker.name,
+          totalRentFee: 12500,
+          durationMinutes: 30,
+        }),
+        expect.objectContaining({
+          id: confirmedTopUp.body.data.walletTransactionId,
+          type: "TOP_UP",
+          amount: 100000,
+          direction: "CREDIT",
+          status: "SUCCESS",
+          referenceId: topUp.body.data.topUpId,
+          referenceType: "TOP_UP",
+        }),
+      ]),
+    );
+    expect(response.body.data).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          referenceId: "other_topup_milestone_8",
+        }),
+      ]),
+    );
+
+    const returnedIndex = response.body.data.findIndex(
+      (item: { id: string }) => item.id === rental.id,
+    );
+    const topUpIndex = response.body.data.findIndex(
+      (item: { id: string }) => item.id === confirmedTopUp.body.data.walletTransactionId,
+    );
+    expect(topUpIndex).toBeGreaterThanOrEqual(0);
+    expect(returnedIndex).toBeGreaterThanOrEqual(0);
+    expect(topUpIndex).toBeLessThan(returnedIndex);
+  });
+});
+
 async function seedDemoData() {
   const { createHash } = await import("node:crypto");
   const user = await prisma.user.upsert({
@@ -1319,8 +1411,7 @@ async function seedDemoData() {
 }
 
 async function registerTestUser() {
-  testUserCounter += 1;
-  const unique = `${Date.now()}-${testUserCounter}-${Math.random().toString(36).slice(2)}`;
+  const unique = uniqueTestSuffix();
   const email = `topup-${unique}@example.com`;
   const phone = `+62813${Date.now().toString().slice(-8)}${testUserCounter
     .toString()
@@ -1339,6 +1430,11 @@ async function registerTestUser() {
     accessToken: response.body.data.accessToken as string,
     userId: response.body.data.user.id as string,
   };
+}
+
+function uniqueTestSuffix() {
+  testUserCounter += 1;
+  return `${Date.now()}-${testUserCounter}-${Math.random().toString(36).slice(2)}`;
 }
 
 async function setWalletBalance(userId: string, balance: number) {

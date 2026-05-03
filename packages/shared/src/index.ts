@@ -256,7 +256,7 @@ export type MarkNotificationReadResponse = {
   success: true;
 };
 
-export type TransactionListItem = {
+export type RentalTransactionListItem = {
   id: string;
   type: "RENTAL";
   status: RentalStatus;
@@ -264,9 +264,24 @@ export type TransactionListItem = {
   totalRentFee: number;
   startRentAt: string;
   returnedAt: string | null;
+  completedAt: string | null;
   durationMinutes: number;
   fine: number;
 };
+
+export type WalletTransactionListItem = {
+  id: string;
+  type: WalletTransactionType;
+  title: string;
+  amount: number;
+  direction: WalletTransactionDirection;
+  status: WalletTransactionStatus;
+  completedAt: string;
+  referenceType: string | null;
+  referenceId: string | null;
+};
+
+export type TransactionListItem = RentalTransactionListItem | WalletTransactionListItem;
 
 export type TransactionsResponse = TransactionListItem[];
 

@@ -44,19 +44,41 @@ import {
   markNotificationReadRequest,
   payReturnFineRequest,
 } from "../lib/api";
+import {
+  calculateServerTimeOffsetMs,
+  formatCurrencyIdr,
+  formatDurationMinutes,
+} from "../lib/display";
 import { scheduleRentalReminders } from "../lib/notifications";
 import { colors, radii, spacing } from "../theme/colors";
 
 const showDeveloperTools = __DEV__;
 
 function formatRupiah(amount: number) {
-  return `Rp ${new Intl.NumberFormat("id-ID").format(amount)}`;
+  return formatCurrencyIdr(amount);
+}
+
+function normalizeTransactionDirection(direction?: string | null) {
+  const normalized = direction?.toUpperCase();
+
+  if (normalized === "CREDIT" || normalized === "IN") {
+    return "CREDIT";
+  }
+
+  if (normalized === "DEBIT" || normalized === "OUT") {
+    return "DEBIT";
+  }
+
+  return null;
+}
+
+function formatSignedRupiah(amount: number, direction?: string | null) {
+  const prefix = direction === "CREDIT" ? "+" : direction === "DEBIT" ? "-" : "";
+  return `${prefix}${formatRupiah(Math.abs(amount))}`;
 }
 
 function formatDuration(minutes: number) {
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return `${hours} hour(s) ${remainingMinutes} minute(s)`;
+  return formatDurationMinutes(minutes);
 }
 
 function formatTimeLeft(seconds: number) {
@@ -104,6 +126,92 @@ function messageFrom(error: unknown) {
   return "Request failed. Please try again.";
 }
 
+type TransactionHistoryItem = Omit<Partial<TransactionListItem>, "type"> & {
+  amount?: number;
+  completedAt?: string | null;
+  direction?: "CREDIT" | "DEBIT" | string | null;
+  durationMinutes?: number;
+  fine?: number;
+  id: string;
+  locationName?: string | null;
+  returnedAt?: string | null;
+  startRentAt?: string | null;
+  status?: string | null;
+  title?: string | null;
+  totalRentFee?: number;
+  type?: "RENTAL" | "TOP_UP" | "RENT_PAYMENT" | "FINE_PAYMENT" | "REFUND" | string;
+};
+
+function labelFromTransactionType(type?: string | null) {
+  switch (type) {
+    case "RENTAL":
+      return "Completed Rental";
+    case "TOP_UP":
+      return "Wallet Top Up";
+    case "RENT_PAYMENT":
+      return "Rent Payment";
+    case "FINE_PAYMENT":
+      return "Fine Payment";
+    case "REFUND":
+      return "Refund";
+    default:
+      return type ? type.replaceAll("_", " ") : "Transaction";
+  }
+}
+
+function iconFromTransactionType(type?: string | null): keyof typeof Ionicons.glyphMap {
+  switch (type) {
+    case "RENTAL":
+      return "flash-outline";
+    case "TOP_UP":
+      return "add-circle-outline";
+    case "REFUND":
+      return "return-up-back-outline";
+    case "FINE_PAYMENT":
+      return "alert-circle-outline";
+    case "RENT_PAYMENT":
+      return "wallet-outline";
+    default:
+      return "receipt-outline";
+  }
+}
+
+function transactionAmount(transaction: TransactionHistoryItem) {
+  if (typeof transaction.amount === "number") {
+    return transaction.amount;
+  }
+
+  const rentFee = transaction.totalRentFee ?? 0;
+  const fine = transaction.fine ?? 0;
+  return rentFee + fine;
+}
+
+function transactionDirection(transaction: TransactionHistoryItem) {
+  const direction = normalizeTransactionDirection(transaction.direction);
+
+  if (direction) {
+    return direction;
+  }
+
+  if (transaction.type === "TOP_UP" || transaction.type === "REFUND") {
+    return "CREDIT";
+  }
+
+  if (
+    transaction.type === "RENTAL" ||
+    transaction.type === "RENT_PAYMENT" ||
+    transaction.type === "FINE_PAYMENT"
+  ) {
+    return "DEBIT";
+  }
+
+  if (typeof transaction.amount === "number") {
+    return transaction.amount >= 0 ? "CREDIT" : "DEBIT";
+  }
+
+  return null;
+}
+
 export function HomeScreen() {
   const { accessToken, me, refreshMe } = useAuth();
   const [activeRental, setActiveRental] = useState<ActiveRentalResponse>(null);
@@ -148,7 +256,7 @@ export function HomeScreen() {
         setActiveRental(rental);
         setTimerNowMs(Date.now());
         setTimerSkipOffsetMs(0);
-        setServerOffsetMs(rental ? new Date(rental.serverNow).getTime() - Date.now() : 0);
+        setServerOffsetMs(rental ? calculateServerTimeOffsetMs(rental.serverNow) : 0);
         void scheduleRentalReminders(rental);
       } catch (error) {
         setActiveRentalError(messageFrom(error));
@@ -528,41 +636,40 @@ export function TransactionsScreen() {
       ) : null}
 
       {transactions.map((transaction) => {
-        const item = transaction as TransactionListItem &
-          Partial<{
-            amount: number;
-            completedAt: string;
-            durationMinutes: number;
-            locationName: string;
-            returnedAt: string;
-            startRentAt: string;
-            title: string;
-            totalRentFee: number;
-            type: string;
-            status: string;
-          }>;
-        const amount = item.totalRentFee ?? item.amount ?? 0;
-        const startedAt = item.startRentAt ?? item.completedAt;
-        const range = item.returnedAt
-          ? `${formatDateTime(startedAt)} - ${formatDateTime(item.returnedAt)}`
-          : formatDateTime(startedAt);
-        const duration =
-          typeof item.durationMinutes === "number"
-            ? formatDuration(item.durationMinutes)
-            : (item.type?.replaceAll("_", " ") ?? "Transaction");
+        const item = transaction as unknown as TransactionHistoryItem;
+        const typeLabel = labelFromTransactionType(item.type);
         const statusLabel = String(item.status ?? "SUCCESS");
+        const amount = transactionAmount(item);
+        const direction = transactionDirection(item);
+        const amountTone =
+          direction === "CREDIT"
+            ? screenStyles.amountCredit
+            : direction === "DEBIT"
+              ? screenStyles.amountDebit
+              : undefined;
+        const title = item.title ?? typeLabel;
+        const location = item.locationName;
+        const date = item.completedAt ?? item.returnedAt ?? item.startRentAt;
+        const startedAt = item.startRentAt ?? item.completedAt;
+        const rentalRange =
+          item.type === "RENTAL" && item.returnedAt
+            ? `${formatDateTime(startedAt)} - ${formatDateTime(item.returnedAt)}`
+            : formatDateTime(date);
 
         return (
           <Card key={transaction.id}>
             <View style={screenStyles.sheetHeader}>
+              <View style={screenStyles.iconCircle}>
+                <Ionicons
+                  name={iconFromTransactionType(item.type)}
+                  size={20}
+                  color={colors.primary}
+                />
+              </View>
               <View style={screenStyles.flexText}>
-                <Text style={screenStyles.cardTitle}>
-                  {item.locationName ??
-                    item.title ??
-                    item.type?.replaceAll("_", " ") ??
-                    "Transaction"}
-                </Text>
-                <Text style={screenStyles.cardBody}>{range}</Text>
+                <Text style={screenStyles.cardTitle}>{title}</Text>
+                <Text style={screenStyles.cardBody}>{location ?? typeLabel}</Text>
+                <Text style={screenStyles.metaText}>{rentalRange}</Text>
               </View>
               <StatusBadge
                 label={statusLabel.replaceAll("_", " ")}
@@ -571,9 +678,28 @@ export function TransactionsScreen() {
                 }
               />
             </View>
+            {item.type === "RENTAL" ? (
+              <View style={screenStyles.transactionDetailBox}>
+                {typeof item.durationMinutes === "number" ? (
+                  <DetailRow label="Duration" value={formatDuration(item.durationMinutes)} />
+                ) : null}
+                <DetailRow label="Rent fee" value={formatRupiah(item.totalRentFee ?? amount)} />
+                {item.fine && item.fine > 0 ? (
+                  <DetailRow label="Fine" value={formatRupiah(item.fine)} />
+                ) : null}
+              </View>
+            ) : null}
             <View style={screenStyles.transactionFooter}>
-              <Text style={screenStyles.cardBody}>{duration}</Text>
-              <Text style={screenStyles.amountText}>{formatRupiah(amount)}</Text>
+              <Text style={screenStyles.cardBody}>
+                {direction === "CREDIT"
+                  ? "Wallet credit"
+                  : direction === "DEBIT"
+                    ? "Wallet debit"
+                    : typeLabel}
+              </Text>
+              <Text style={[screenStyles.amountText, amountTone]}>
+                {formatSignedRupiah(amount, direction)}
+              </Text>
             </View>
           </Card>
         );
@@ -627,22 +753,35 @@ export function NotificationsScreen() {
     }
   }, [loadNotifications]);
 
-  const markRead = useCallback(
+  const handleNotificationPress = useCallback(
     async (notification: NotificationListItem) => {
-      if (!accessToken || notification.readAt) {
+      const shouldOpenTransactions = Boolean(
+        notification.relatedTransactionId || notification.relatedRentalId,
+      );
+
+      if (!accessToken) {
+        if (shouldOpenTransactions) {
+          router.push("/transactions");
+        }
         return;
       }
 
-      setNotifications((current) =>
-        current.map((item) =>
-          item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item,
-        ),
-      );
+      if (!notification.readAt) {
+        setNotifications((current) =>
+          current.map((item) =>
+            item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item,
+          ),
+        );
 
-      try {
-        await markNotificationReadRequest(accessToken, notification.id);
-      } catch {
-        await loadNotifications({ showLoading: false });
+        try {
+          await markNotificationReadRequest(accessToken, notification.id);
+        } catch {
+          await loadNotifications({ showLoading: false });
+        }
+      }
+
+      if (shouldOpenTransactions) {
+        router.push("/transactions");
       }
     },
     [accessToken, loadNotifications],
@@ -685,7 +824,11 @@ export function NotificationsScreen() {
       ) : null}
 
       {notifications.map((notification) => (
-        <Pressable key={notification.id} onPress={() => void markRead(notification)}>
+        <Pressable
+          accessibilityRole="button"
+          key={notification.id}
+          onPress={() => void handleNotificationPress(notification)}
+        >
           <Card style={notification.readAt ? undefined : screenStyles.unreadCard}>
             <View style={screenStyles.notificationRow}>
               <View style={screenStyles.iconCircle}>
@@ -1342,6 +1485,12 @@ const screenStyles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "800",
   },
+  amountCredit: {
+    color: colors.primary,
+  },
+  amountDebit: {
+    color: colors.accent,
+  },
   activeCard: {
     borderLeftColor: colors.accent,
     borderLeftWidth: 5,
@@ -1789,6 +1938,15 @@ const screenStyles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginTop: 18,
+  },
+  transactionDetailBox: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
   },
   unreadCard: {
     borderColor: colors.primary,

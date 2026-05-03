@@ -9,7 +9,7 @@
     "export": "expo export --platform all",
     "lint": "tsc -p tsconfig.json --noEmit",
     "start": "expo start",
-    "test": "echo \"No mobile tests yet\"",
+    "test": "pnpm --dir ../api exec tsx --test ../mobile/src/lib/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -339,7 +339,7 @@ export async function createRental(
       },
     });
 
-    await tx.walletTransaction.create({
+    const walletTransaction = await tx.walletTransaction.create({
       data: {
         walletId: wallet.id,
         type: "RENT_PAYMENT",
@@ -373,6 +373,7 @@ export async function createRental(
         title: "Rent Success",
         message: "Extension cable successfully unlocked. Your rental session has started.",
         relatedRentalId: rental.id,
+        relatedTransactionId: walletTransaction.id,
       },
     });
 
