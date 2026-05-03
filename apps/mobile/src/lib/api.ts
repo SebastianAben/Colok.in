@@ -32,6 +32,7 @@ import type {
 } from "@colokin/shared";
 
 export const apiBaseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000/v1";
+const requestTimeoutMs = 10000;
 
 export class ApiClientError extends Error {
   readonly code: string;
@@ -57,6 +58,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -66,13 +69,34 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     headers.Authorization = `Bearer ${options.token}`;
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    headers,
-    method: options.method ?? (options.body === undefined ? "GET" : "POST"),
-  });
+  let response: Response;
 
-  const payload = (await response.json()) as ApiSuccess<T> | ApiErrorResponse;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      headers,
+      method: options.method ?? (options.body === undefined ? "GET" : "POST"),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    throw new ApiClientError(
+      0,
+      "NETWORK_ERROR",
+      error instanceof Error && error.name === "AbortError"
+        ? "Request timed out."
+        : "Unable to connect to Colok.in.",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  let payload: ApiSuccess<T> | ApiErrorResponse;
+
+  try {
+    payload = (await response.json()) as ApiSuccess<T> | ApiErrorResponse;
+  } catch {
+    throw new ApiClientError(response.status, "INVALID_RESPONSE", "Unexpected server response.");
+  }
 
   if (!response.ok || "error" in payload) {
     const error = "error" in payload ? payload.error : undefined;
