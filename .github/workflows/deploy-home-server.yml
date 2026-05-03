@@ -111,7 +111,7 @@ jobs:
           set +a
 
           docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml config >/dev/null
-          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml build api migrate seed
+          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml build api
           docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml up -d --wait postgres mosquitto
 
           mkdir -p backups
