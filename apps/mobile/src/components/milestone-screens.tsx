@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -160,7 +161,7 @@ const settingsMenuItems = [
     title: "Help & Support",
   },
   {
-    description: "Read MVP usage, safety, and wallet policies.",
+    description: "Read usage, safety, and wallet policies.",
     href: "/settings/terms",
     icon: "document-text-outline",
     title: "Terms & Policies",
@@ -172,7 +173,7 @@ const settingsMenuItems = [
     title: "Feedback",
   },
   {
-    description: "Learn about the Colok.in smart locker MVP.",
+    description: "Learn about the Colok.in smart locker service.",
     href: "/settings/about",
     icon: "information-circle-outline",
     title: "About Us",
@@ -942,24 +943,31 @@ export function SettingsScreen() {
         <Ionicons name="log-out-outline" size={18} color={colors.text} />
         <Text style={screenStyles.logoutButtonText}>Log Out</Text>
       </Pressable>
-      {confirmingLogout ? (
-        <Card style={screenStyles.confirmCard}>
-          <Text style={screenStyles.cardTitle}>Log out of Colok.in?</Text>
-          <Text style={screenStyles.cardBody}>
-            You will need to log in again before renting or topping up your wallet.
-          </Text>
-          <View style={screenStyles.confirmActions}>
-            <SecondaryButton label="Cancel" onPress={() => setConfirmingLogout(false)} />
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void logout()}
-              style={screenStyles.logoutConfirmButton}
-            >
-              <Text style={screenStyles.logoutButtonText}>Log Out</Text>
-            </Pressable>
-          </View>
-        </Card>
-      ) : null}
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setConfirmingLogout(false)}
+        transparent
+        visible={confirmingLogout}
+      >
+        <View style={screenStyles.logoutModalBackdrop}>
+          <Card style={screenStyles.confirmCard}>
+            <Text style={screenStyles.cardTitle}>Log out of Colok.in?</Text>
+            <Text style={screenStyles.cardBody}>
+              You will need to log in again before renting or topping up your wallet.
+            </Text>
+            <View style={screenStyles.confirmActions}>
+              <SecondaryButton label="Cancel" onPress={() => setConfirmingLogout(false)} />
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void logout()}
+                style={screenStyles.logoutConfirmButton}
+              >
+                <Text style={screenStyles.logoutButtonText}>Log Out</Text>
+              </Pressable>
+            </View>
+          </Card>
+        </View>
+      </Modal>
     </ScreenShell>
   );
 }
@@ -973,7 +981,7 @@ export function ApplicationSettingsScreen() {
     <ScreenShell
       activeTab="Settings"
       title="Application Settings"
-      subtitle="Adjust local preferences for the demo app."
+      subtitle="Adjust local preferences for your Colok.in rental experience."
     >
       <SettingsToggleRow
         description="Keep local reminders active before rentals are due."
@@ -983,7 +991,7 @@ export function ApplicationSettingsScreen() {
         onChange={setPushReminders}
       />
       <SettingsToggleRow
-        description="Demo placeholder for biometric confirmation."
+        description="Require biometric confirmation before payment-sensitive actions."
         enabled={biometricUnlock}
         icon="finger-print-outline"
         label="Biometric confirmation"
@@ -1005,7 +1013,7 @@ export function HelpSupportScreen() {
     <ScreenShell
       activeTab="Settings"
       title="Help & Support"
-      subtitle="Quick answers for common Colok.in demo flows."
+      subtitle="Quick answers for renting, returning, and managing wallet balance."
     >
       <InfoSection
         icon="flash-outline"
@@ -1015,12 +1023,12 @@ export function HelpSupportScreen() {
       <InfoSection
         icon="return-down-back-outline"
         title="Return support"
-        body="Tap Return from an active rental, follow the assigned compartment instruction, and wait until the mock sensor verifies the cable."
+        body="Tap Return from an active rental, follow the assigned compartment instruction, close the locker securely, and wait for return verification."
       />
       <InfoSection
         icon="wallet-outline"
         title="Wallet support"
-        body="Use Top Up to generate a QR payment code. In this MVP, confirming the dummy QR credits your wallet immediately."
+        body="Use Top Up to generate a payment QR, complete the payment flow, and refresh your wallet balance before renting."
       />
     </ScreenShell>
   );
@@ -1031,7 +1039,7 @@ export function TermsPoliciesScreen() {
     <ScreenShell
       activeTab="Settings"
       title="Terms & Policies"
-      subtitle="MVP policy summary for demo usage."
+      subtitle="Usage rules for Colok.in rentals and wallet payments."
     >
       <InfoSection
         icon="shield-checkmark-outline"
@@ -1046,7 +1054,7 @@ export function TermsPoliciesScreen() {
       <InfoSection
         icon="card-outline"
         title="Wallet balance"
-        body="MVP wallet top ups use dummy QR confirmation and do not connect to a production payment gateway."
+        body="Wallet balance is used to pay rental fees and late fines. Make sure your balance is sufficient before confirming a rental."
       />
     </ScreenShell>
   );
@@ -1153,7 +1161,7 @@ export function AboutUsScreen() {
     <ScreenShell
       activeTab="Settings"
       title="About Us"
-      subtitle="Colok.in smart locker MVP for extension cable rentals."
+      subtitle="Colok.in smart lockers for extension cable rentals."
     >
       <InfoSection
         icon="battery-charging-outline"
@@ -1162,13 +1170,13 @@ export function AboutUsScreen() {
       />
       <InfoSection
         icon="hardware-chip-outline"
-        title="MVP technology"
-        body="The app connects Expo mobile, Express API, PostgreSQL, Firebase notification paths, and mock MQTT IoT flows."
+        title="Connected locker system"
+        body="The app connects mobile rental flows, backend rental records, wallet transactions, notifications, QR validation, and locker return verification."
       />
       <InfoSection
         icon="location-outline"
-        title="Demo location"
-        body="The current demo uses Labtek V ITB with mock locker stock, QR validation, wallet payment, and sensor return verification."
+        title="Locker locations"
+        body="Colok.in can operate across campus and public locations where users need quick access to ready-to-use extension cables."
       />
     </ScreenShell>
   );
@@ -1180,12 +1188,12 @@ export function TopUpGuideScreen() {
       <InfoSection
         icon="create-outline"
         title="Enter amount"
-        body="Open Top Up from Home, enter the amount in Rupiah, then generate the MVP QR payment code."
+        body="Open Top Up from Home, enter the amount in Rupiah, then generate the payment QR code."
       />
       <InfoSection
         icon="qr-code-outline"
         title="Confirm QR"
-        body="Use the confirm action or scanner flow to validate the dummy QR payload created by the backend."
+        body="Use the confirm action or scanner flow to validate the payment QR created for your top up."
       />
       <InfoSection
         icon="checkmark-circle-outline"
@@ -2191,6 +2199,15 @@ const screenStyles = StyleSheet.create({
   confirmCard: {
     borderColor: `${colors.danger}66`,
     gap: 14,
+    maxWidth: 360,
+    width: "100%",
+  },
+  logoutModalBackdrop: {
+    alignItems: "center",
+    backgroundColor: "rgba(3, 16, 27, 0.72)",
+    flex: 1,
+    justifyContent: "center",
+    padding: spacing.screen,
   },
   modalTitle: {
     color: colors.text,
@@ -2228,9 +2245,10 @@ const screenStyles = StyleSheet.create({
     borderRadius: radii.button,
     borderWidth: 1,
     flex: 1,
+    minWidth: 78,
     minHeight: 40,
     justifyContent: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
   },
   segmentButtonActive: {
     backgroundColor: colors.primary,
