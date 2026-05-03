@@ -4,17 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --dir ../.. --filter @colokin/shared build && tsc -p tsconfig.json",
+    "build": "pnpm --dir ../.. --filter @colokin/shared build && pnpm prisma:generate && tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
-    "lint": "pnpm --dir ../.. --filter @colokin/shared build && tsc -p tsconfig.json --noEmit",
+    "lint": "pnpm --dir ../.. --filter @colokin/shared build && pnpm prisma:generate && tsc -p tsconfig.json --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:studio": "prisma studio --hostname 0.0.0.0",
     "start": "node dist/server.js",
-    "test": "vitest run",
-    "typecheck": "pnpm --dir ../.. --filter @colokin/shared build && tsc -p tsconfig.json --noEmit"
+    "test": "pnpm prisma:generate && vitest run src",
+    "typecheck": "pnpm --dir ../.. --filter @colokin/shared build && pnpm prisma:generate && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@colokin/shared": "workspace:*",
