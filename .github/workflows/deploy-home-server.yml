@@ -209,5 +209,10 @@ jobs:
           set +a
           export API_IMAGE
 
-          curl --fail --show-error --silent "http://127.0.0.1:${API_HOST_PORT}/v1/health"
+          LOCAL_HEALTH_HOST="${API_HEALTH_HOST:-${API_HOST_BIND:-127.0.0.1}}"
+          if [ "$LOCAL_HEALTH_HOST" = "0.0.0.0" ]; then
+            LOCAL_HEALTH_HOST="127.0.0.1"
+          fi
+
+          curl --fail --show-error --silent "http://${LOCAL_HEALTH_HOST}:${API_HOST_PORT}/v1/health"
           curl --fail --show-error --silent "$PUBLIC_HEALTH_URL"
