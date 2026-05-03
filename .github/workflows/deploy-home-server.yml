@@ -18,15 +18,80 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: colokin-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  build:
+    name: Build and push API image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select image tags
+        id: image
+        run: |
+          image="ghcr.io/sebastianaben/colokin-api:${GITHUB_SHA}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            target="${{ inputs.environment }}"
+          elif [ "${GITHUB_REF_NAME}" = "main" ]; then
+            target="prod"
+          else
+            target="dev"
+          fi
+
+          case "$target" in
+            dev)
+              latest="ghcr.io/sebastianaben/colokin-api:dev-latest"
+              ;;
+            prod)
+              latest="ghcr.io/sebastianaben/colokin-api:prod-latest"
+              ;;
+            *)
+              echo "Unknown image target: $target" >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "image=$image"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: runner
+          push: true
+          tags: |
+            ${{ steps.image.outputs.image }}
+            ${{ steps.image.outputs.latest }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
     name: Deploy backend
     runs-on: [self-hosted, Linux, X64, docker, colokin]
+    needs: build
 
     steps:
       - name: Checkout
@@ -104,14 +169,20 @@ jobs:
           fi
 
       - name: Build and deploy stack
+        env:
+          API_IMAGE: ${{ needs.build.outputs.image }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd "$DEPLOY_PATH"
           set -a
           . "$ENV_FILE"
           set +a
+          export API_IMAGE
 
           docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml config >/dev/null
-          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml build api
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml pull api
           docker compose --env-file "$ENV_FILE" -f docker-compose.server.yml up -d --wait postgres mosquitto
 
           mkdir -p backups
@@ -129,11 +200,14 @@ jobs:
           docker image prune -f
 
       - name: Smoke test
+        env:
+          API_IMAGE: ${{ needs.build.outputs.image }}
         run: |
           cd "$DEPLOY_PATH"
           set -a
           . "$ENV_FILE"
           set +a
+          export API_IMAGE
 
           curl --fail --show-error --silent "http://127.0.0.1:${API_HOST_PORT}/v1/health"
           curl --fail --show-error --silent "$PUBLIC_HEALTH_URL"

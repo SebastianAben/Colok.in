@@ -10,11 +10,15 @@
 4. Configure Nginx Proxy Manager hosts:
    - `api-dev.colokin.albern.space` -> `http://127.0.0.1:4001`
    - `api.colokin.albern.space` -> `http://127.0.0.1:4000`
+5. Confirm GitHub Actions can publish and read packages from GHCR:
+   - `ghcr.io/sebastianaben/colokin-api`
 
 ## Deploy Policy
 
 - `dev` deploys automatically to the dev stack and runs seed.
 - `main` deploys automatically to the prod stack and does not run seed.
+- API images are built on GitHub-hosted runners and pushed to GHCR.
+- The home server pulls the prebuilt image and does not run `pnpm install`.
 - Both environments run `prisma migrate deploy`.
 - Both environments create a database backup before migration.
 
@@ -35,4 +39,11 @@ curl http://127.0.0.1:4001/v1/health
 curl https://api-dev.colokin.albern.space/v1/health
 curl http://127.0.0.1:4000/v1/health
 curl https://api.colokin.albern.space/v1/health
+```
+
+Manual compose commands require an image:
+
+```bash
+export API_IMAGE=ghcr.io/sebastianaben/colokin-api:dev-latest
+docker compose --env-file .env.server.dev -f docker-compose.server.yml ps
 ```

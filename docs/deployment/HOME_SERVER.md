@@ -2,6 +2,8 @@
 
 Colok.in deploys the backend stack to a physical home server. The Expo mobile app is not hosted on the server; mobile builds select the backend with `EXPO_PUBLIC_API_URL`.
 
+The API Docker image is built on GitHub-hosted Actions and pushed to GitHub Container Registry (GHCR). The home server only pulls the image, runs migrations, optionally seeds dev, restarts services, and smoke tests the result.
+
 ## Environments
 
 | Branch | Environment | Server path                                | Local API port   | Public API                                |
@@ -58,6 +60,12 @@ sudo ./svc.sh start
 
 The workflow targets `[self-hosted, Linux, X64, docker, colokin]`.
 
+The deploy workflow also needs GitHub Actions package permissions so it can push and pull:
+
+```text
+ghcr.io/sebastianaben/colokin-api
+```
+
 ## CI/CD Behavior
 
 `.github/workflows/ci.yml` runs on pushes and PRs to `dev` and `main`:
@@ -78,13 +86,14 @@ docker compose --env-file .env.server.prod.example -f docker-compose.server.yml 
 
 Deploy steps:
 
-1. Sync repo files to the environment path while preserving env files and backups.
-2. Build the API image locally on the home server.
-3. Start PostgreSQL and Mosquitto.
-4. Create a predeploy PostgreSQL backup under `backups/`.
-5. Run `pnpm prisma:migrate:deploy`.
-6. Run `pnpm prisma:seed` only for dev.
-7. Start API and smoke test local plus public health endpoints.
+1. Build and push the API image to GHCR on a GitHub-hosted runner.
+2. Sync repo files to the environment path while preserving env files and backups.
+3. Pull the selected API image on the home server.
+4. Start PostgreSQL and Mosquitto.
+5. Create a predeploy PostgreSQL backup under `backups/`.
+6. Run `pnpm prisma:migrate:deploy`.
+7. Run `pnpm prisma:seed` only for dev.
+8. Start API and smoke test local plus public health endpoints.
 
 ## Nginx Proxy Manager
 
@@ -104,6 +113,7 @@ If Nginx Proxy Manager runs in Docker bridge mode and cannot reach host loopback
 From the environment path:
 
 ```bash
+export API_IMAGE=ghcr.io/sebastianaben/colokin-api:dev-latest
 docker compose --env-file .env.server.dev -f docker-compose.server.yml ps
 docker compose --env-file .env.server.dev -f docker-compose.server.yml logs -f api
 docker compose --env-file .env.server.dev -f docker-compose.server.yml run --rm migrate
@@ -115,10 +125,15 @@ Prod equivalents use `.env.server.prod`.
 Create a manual backup:
 
 ```bash
+export API_IMAGE=ghcr.io/sebastianaben/colokin-api:prod-latest
 docker compose --env-file .env.server.prod -f docker-compose.server.yml exec -T postgres \
   sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
   > "backups/manual-prod-$(date +%Y%m%d%H%M%S).sql"
 ```
+
+## Troubleshooting GHCR Pulls
+
+If deploy fails while pulling `ghcr.io/sebastianaben/colokin-api`, check GitHub package permissions or `docker login ghcr.io` on the runner. The home server should not run `pnpm install` during deploy; npm registry failures indicate the workflow is using an old commit or a manual Docker build command.
 
 ## Mobile Configuration
 

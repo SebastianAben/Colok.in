@@ -71,4 +71,6 @@ jobs:
         run: pnpm build
 
       - name: Validate server compose
+        env:
+          API_IMAGE: ghcr.io/sebastianaben/colokin-api:ci
         run: docker compose --env-file .env.server.prod.example -f docker-compose.server.yml config >/dev/null
