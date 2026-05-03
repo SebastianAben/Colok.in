@@ -28,9 +28,12 @@ cp .env.server.prod.example /home/froztbitez/web-server/colokin/prod/.env.server
 Fill strong values for:
 
 - `POSTGRES_PASSWORD`
+- `DATABASE_URL`
 - `JWT_ACCESS_SECRET`
 - `JWT_REFRESH_SECRET`
 - Firebase fields if `FCM_ENABLED=true`
+
+`POSTGRES_PASSWORD` is the raw PostgreSQL password. `DATABASE_URL` is the Prisma connection URL used by the API. If the password contains URL-reserved characters such as `@`, `:`, `/`, `#`, `?`, `%`, or `&`, URL-encode the password inside `DATABASE_URL`, or use a hex password generated with `openssl rand -hex 32`.
 
 Do not commit real `.env.server.dev` or `.env.server.prod` files.
 

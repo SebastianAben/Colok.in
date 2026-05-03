@@ -3,7 +3,7 @@ name: ${COMPOSE_PROJECT_NAME:-colokin}
 x-api-environment: &api-environment
   NODE_ENV: production
   API_PORT: 4000
-  DATABASE_URL: postgresql://${POSTGRES_USER:-colokin}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-colokin}?schema=public
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
   JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
   JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
   MQTT_URL: mqtt://mosquitto:1883
