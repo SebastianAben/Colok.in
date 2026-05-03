@@ -6,10 +6,10 @@ The API Docker image is built on GitHub-hosted Actions and pushed to GitHub Cont
 
 ## Environments
 
-| Branch | Environment | Server path                                | Docker bridge API port | Public API                                |
-| ------ | ----------- | ------------------------------------------ | ---------------------- | ----------------------------------------- |
-| `dev`  | dev         | `/home/froztbitez/web-server/colokin/dev`  | `172.17.0.1:4001`      | `https://api-dev-colokin.albern.space/v1` |
-| `main` | prod        | `/home/froztbitez/web-server/colokin/prod` | `172.17.0.1:4000`      | `https://api-colokin.albern.space/v1`     |
+| Branch | Environment | Server path                                | Local API port   | Public API                                |
+| ------ | ----------- | ------------------------------------------ | ---------------- | ----------------------------------------- |
+| `dev`  | dev         | `/home/froztbitez/web-server/colokin/dev`  | `127.0.0.1:4001` | `https://api-dev-colokin.albern.space/v1` |
+| `main` | prod        | `/home/froztbitez/web-server/colokin/prod` | `127.0.0.1:4000` | `https://api-colokin.albern.space/v1`     |
 
 The two stacks use separate Compose project names and therefore separate PostgreSQL volumes.
 
@@ -103,12 +103,10 @@ Deploy steps:
 Cloudflare Tunnel should continue routing public traffic to Nginx Proxy Manager. Add two proxy hosts:
 
 ```text
-api-dev-colokin.albern.space -> http://172.17.0.1:4001
-api-colokin.albern.space     -> http://172.17.0.1:4000
+api-dev-colokin.albern.space -> http://127.0.0.1:4001
+api-colokin.albern.space     -> http://127.0.0.1:4000
 ```
 
-Cloudflare Tunnel can keep pointing to Nginx Proxy Manager, for example `http://172.17.0.1:80`.
-Cloudflare handles public TLS; Nginx Proxy Manager should forward to the API over plain HTTP.
 Keep PostgreSQL and Mosquitto private.
 
 If Nginx Proxy Manager runs in Docker bridge mode and cannot reach host loopback addresses, either run NPM with host networking, route through a host-reachable address, or switch this stack to a shared Docker network before enabling the public smoke test.

@@ -8,8 +8,8 @@
    - `/home/froztbitez/web-server/colokin/dev/.env.server.dev`
    - `/home/froztbitez/web-server/colokin/prod/.env.server.prod`
 4. Configure Nginx Proxy Manager hosts:
-   - `api-dev-colokin.albern.space` -> `http://172.17.0.1:4001`
-   - `api-colokin.albern.space` -> `http://172.17.0.1:4000`
+   - `api-dev-colokin.albern.space` -> `http://127.0.0.1:4001`
+   - `api-colokin.albern.space` -> `http://127.0.0.1:4000`
 5. Confirm GitHub Actions can publish and read packages from GHCR:
    - `ghcr.io/sebastianaben/colokin-api`
 
@@ -35,9 +35,9 @@ Copy the matching example env file into each path, fill secrets, then push to `d
 Health checks:
 
 ```bash
-curl http://172.17.0.1:4001/v1/health
+curl http://127.0.0.1:4001/v1/health
 curl https://api-dev-colokin.albern.space/v1/health
-curl http://172.17.0.1:4000/v1/health
+curl http://127.0.0.1:4000/v1/health
 curl https://api-colokin.albern.space/v1/health
 ```
 
