@@ -17,6 +17,27 @@ jobs:
   verify:
     name: Verify workspace
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: colokin
+          POSTGRES_PASSWORD: colokin
+          POSTGRES_DB: colokin
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U colokin -d colokin"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://colokin:colokin@127.0.0.1:15432/colokin?schema=public
+      JWT_ACCESS_SECRET: dev_access_secret_change_me
+      JWT_REFRESH_SECRET: dev_refresh_secret_change_me
+      MQTT_URL: mqtt://127.0.0.1:1883
+      IOT_MODE: mock
+      FCM_ENABLED: "false"
 
     steps:
       - name: Checkout
@@ -36,6 +57,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare API test database
+        run: pnpm --filter @colokin/api prisma:migrate:deploy
 
       - name: Typecheck
         run: pnpm typecheck
