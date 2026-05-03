@@ -58,7 +58,7 @@ pnpm dev:mobile
 ## API URLs
 
 - Local API: `http://127.0.0.1:4000/v1`
-- Planned tunnel API: `https://api.colokin.albern.space/v1`
+- Planned tunnel API: `https://api-colokin.albern.space/v1`
 
 Mobile uses `EXPO_PUBLIC_API_URL`; see `apps/mobile/.env.local.example` and `apps/mobile/.env.server.example`.
 

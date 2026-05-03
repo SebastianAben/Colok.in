@@ -8,8 +8,8 @@ The API Docker image is built on GitHub-hosted Actions and pushed to GitHub Cont
 
 | Branch | Environment | Server path                                | Local API port   | Public API                                |
 | ------ | ----------- | ------------------------------------------ | ---------------- | ----------------------------------------- |
-| `dev`  | dev         | `/home/froztbitez/web-server/colokin/dev`  | `127.0.0.1:4001` | `https://api-dev.colokin.albern.space/v1` |
-| `main` | prod        | `/home/froztbitez/web-server/colokin/prod` | `127.0.0.1:4000` | `https://api.colokin.albern.space/v1`     |
+| `dev`  | dev         | `/home/froztbitez/web-server/colokin/dev`  | `127.0.0.1:4001` | `https://api-dev-colokin.albern.space/v1` |
+| `main` | prod        | `/home/froztbitez/web-server/colokin/prod` | `127.0.0.1:4000` | `https://api-colokin.albern.space/v1`     |
 
 The two stacks use separate Compose project names and therefore separate PostgreSQL volumes.
 
@@ -103,8 +103,8 @@ Deploy steps:
 Cloudflare Tunnel should continue routing public traffic to Nginx Proxy Manager. Add two proxy hosts:
 
 ```text
-api-dev.colokin.albern.space -> http://127.0.0.1:4001
-api.colokin.albern.space     -> http://127.0.0.1:4000
+api-dev-colokin.albern.space -> http://127.0.0.1:4001
+api-colokin.albern.space     -> http://127.0.0.1:4000
 ```
 
 Keep PostgreSQL and Mosquitto private.
@@ -143,11 +143,11 @@ If deploy fails while pulling `ghcr.io/sebastianaben/colokin-api`, check GitHub 
 Development/staging:
 
 ```env
-EXPO_PUBLIC_API_URL=https://api-dev.colokin.albern.space/v1
+EXPO_PUBLIC_API_URL=https://api-dev-colokin.albern.space/v1
 ```
 
 Production/demo final:
 
 ```env
-EXPO_PUBLIC_API_URL=https://api.colokin.albern.space/v1
+EXPO_PUBLIC_API_URL=https://api-colokin.albern.space/v1
 ```

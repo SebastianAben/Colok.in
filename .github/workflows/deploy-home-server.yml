@@ -114,7 +114,7 @@ jobs:
                 echo "DEPLOY_PATH=/home/froztbitez/web-server/colokin/dev"
                 echo "ENV_FILE=.env.server.dev"
                 echo "SEED_AFTER_MIGRATE=true"
-                echo "PUBLIC_HEALTH_URL=https://api-dev.colokin.albern.space/v1/health"
+                echo "PUBLIC_HEALTH_URL=https://api-dev-colokin.albern.space/v1/health"
               } >> "$GITHUB_ENV"
               ;;
             prod)
@@ -123,7 +123,7 @@ jobs:
                 echo "DEPLOY_PATH=/home/froztbitez/web-server/colokin/prod"
                 echo "ENV_FILE=.env.server.prod"
                 echo "SEED_AFTER_MIGRATE=false"
-                echo "PUBLIC_HEALTH_URL=https://api.colokin.albern.space/v1/health"
+                echo "PUBLIC_HEALTH_URL=https://api-colokin.albern.space/v1/health"
               } >> "$GITHUB_ENV"
               ;;
             *)
