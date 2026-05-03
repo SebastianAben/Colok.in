@@ -79,7 +79,7 @@ export function AppHeader() {
         <Image
           accessibilityIgnoresInvertColors
           resizeMode="contain"
-          source={require("../../assets/images/logocolokin_text2.png")}
+          source={require("../../assets/images/logocolokin_text_transparent.png")}
           style={styles.brandLogo}
         />
       </View>
@@ -273,8 +273,8 @@ export const styles = StyleSheet.create({
     width: 56,
   },
   brandLogo: {
-    height: 28,
-    width: 116,
+    height: 72,
+    width: 184,
   },
   brandWrap: {
     alignItems: "center",

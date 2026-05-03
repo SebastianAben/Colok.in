@@ -205,7 +205,7 @@ function AuthShell({
           <Image
             accessibilityIgnoresInvertColors
             resizeMode="contain"
-            source={require("../../assets/images/logocolokin_text2.png")}
+            source={require("../../assets/images/logocolokin_text_transparent.png")}
             style={styles.brandTextImage}
           />
         </View>
@@ -278,6 +278,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.small,
+    marginLeft: -6,
     marginBottom: spacing.section,
   },
   brandIcon: {
@@ -295,8 +296,8 @@ const styles = StyleSheet.create({
     width: 58,
   },
   brandTextImage: {
-    height: 34,
-    width: 126,
+    height: 76,
+    width: 160,
   },
   formCard: {
     backgroundColor: colors.surface,
