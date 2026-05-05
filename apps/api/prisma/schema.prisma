@@ -100,20 +100,28 @@ enum NotificationType {
   SYSTEM
 }
 
+enum FeedbackStatus {
+  OPEN
+  REVIEWED
+  CLOSED
+}
+
 model User {
-  id           String         @id @default(cuid())
-  name         String
-  phone        String         @unique
-  email        String         @unique
-  avatarUrl    String?
-  passwordHash String
-  status       UserStatus     @default(ACTIVE)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  wallet       Wallet?
-  rentals      Rental[]
-  topUps       TopUp[]
+  id            String         @id @default(cuid())
+  name          String
+  phone         String         @unique
+  email         String         @unique
+  avatarUrl     String?
+  passwordHash  String
+  status        UserStatus     @default(ACTIVE)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  wallet        Wallet?
+  rentals       Rental[]
+  topUps        TopUp[]
   notifications Notification[]
+  deviceTokens  DeviceToken[]
+  feedback      Feedback[]
 }
 
 model Wallet {
@@ -143,16 +151,16 @@ model WalletTransaction {
 }
 
 model Locker {
-  id               String        @id @default(cuid())
+  id               String          @id @default(cuid())
   name             String
   address          String
-  lat              Decimal       @db.Decimal(9, 6)
-  lng              Decimal       @db.Decimal(9, 6)
-  status           LockerStatus  @default(ONLINE)
-  operationalHours String        @default("24/7")
+  lat              Decimal         @db.Decimal(9, 6)
+  lng              Decimal         @db.Decimal(9, 6)
+  status           LockerStatus    @default(ONLINE)
+  operationalHours String          @default("24/7")
   lastHeartbeatAt  DateTime?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
   compartments     Compartment[]
   cableUnits       CableUnit[]
   rentals          Rental[]
@@ -177,44 +185,44 @@ model Compartment {
 }
 
 model CableUnit {
-  id                   String          @id @default(cuid())
-  serialNumber         String          @unique
-  status               CableUnitStatus @default(AVAILABLE)
-  specification        String
-  isSniCertified       Boolean         @default(true)
-  hasOverloadProtection Boolean        @default(true)
-  currentLockerId      String?
-  currentCompartmentId String?
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
-  currentLocker        Locker?         @relation(fields: [currentLockerId], references: [id], onDelete: SetNull)
-  currentCompartment   Compartment?    @relation(fields: [currentCompartmentId], references: [id], onDelete: SetNull)
-  rentals              Rental[]
+  id                    String          @id @default(cuid())
+  serialNumber          String          @unique
+  status                CableUnitStatus @default(AVAILABLE)
+  specification         String
+  isSniCertified        Boolean         @default(true)
+  hasOverloadProtection Boolean         @default(true)
+  currentLockerId       String?
+  currentCompartmentId  String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  currentLocker         Locker?         @relation(fields: [currentLockerId], references: [id], onDelete: SetNull)
+  currentCompartment    Compartment?    @relation(fields: [currentCompartmentId], references: [id], onDelete: SetNull)
+  rentals               Rental[]
 
   @@index([currentLockerId, status])
 }
 
 model Rental {
-  id            String       @id @default(cuid())
-  userId        String
-  lockerId      String
-  compartmentId String
-  cableUnitId   String
-  status        RentalStatus @default(DRAFT)
+  id              String          @id @default(cuid())
+  userId          String
+  lockerId        String
+  compartmentId   String
+  cableUnitId     String
+  status          RentalStatus    @default(DRAFT)
   durationMinutes Int
-  startedAt     DateTime
-  dueAt         DateTime
-  returnedAt    DateTime?
-  rentFee       Int
-  fine          Int          @default(0)
-  totalFee      Int
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  locker        Locker       @relation(fields: [lockerId], references: [id], onDelete: Restrict)
-  compartment   Compartment  @relation(fields: [compartmentId], references: [id], onDelete: Restrict)
-  cableUnit     CableUnit    @relation(fields: [cableUnitId], references: [id], onDelete: Restrict)
-  returnSessions ReturnSession[]
+  startedAt       DateTime
+  dueAt           DateTime
+  returnedAt      DateTime?
+  rentFee         Int
+  fine            Int             @default(0)
+  totalFee        Int
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  locker          Locker          @relation(fields: [lockerId], references: [id], onDelete: Restrict)
+  compartment     Compartment     @relation(fields: [compartmentId], references: [id], onDelete: Restrict)
+  cableUnit       CableUnit       @relation(fields: [cableUnitId], references: [id], onDelete: Restrict)
+  returnSessions  ReturnSession[]
 
   @@index([userId, status])
 }
@@ -236,17 +244,17 @@ model ReturnSession {
 }
 
 model TopUp {
-  id                  String          @id @default(cuid())
+  id                  String             @id @default(cuid())
   userId              String
   amount              Int
-  status              TopUpStatus     @default(PENDING)
+  status              TopUpStatus        @default(PENDING)
   dummyQrPayload      String
   dummyQrTokenHash    String
   expiresAt           DateTime?
   confirmedAt         DateTime?
   walletTransactionId String?
-  createdAt           DateTime        @default(now())
-  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt           DateTime           @default(now())
+  user                User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   walletTransaction   WalletTransaction? @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
 
   @@index([userId, status])
@@ -265,4 +273,33 @@ model Notification {
   user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+model DeviceToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  platform  String
+  deviceId  String?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+}
+
+model Feedback {
+  id        String         @id @default(cuid())
+  userId    String
+  category  String
+  subject   String
+  message   String
+  status    FeedbackStatus @default(OPEN)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }

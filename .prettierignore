@@ -2,6 +2,7 @@ node_modules
 dist
 .turbo
 .expo
+apps/mobile/expo-env.d.ts
 .env
 .env.*
 !.env.example

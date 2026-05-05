@@ -1,0 +1,656 @@
+import type {
+  ActiveRentalResponse,
+  RentalDetailResponse,
+  RentalQuoteResponse,
+  ReturnIntentResponse,
+} from "@colokin/shared";
+import { Prisma, type RentalStatus } from "@prisma/client";
+import {
+  forbiddenError,
+  insufficientBalanceError,
+  lockerNotFoundError,
+  lockerOfflineError,
+  noActiveRentalError,
+  noCableAvailableError,
+  qrInvalidError,
+  returnNotVerifiedError,
+  unlockFailedError,
+  userHasActiveRentalError,
+  validationError,
+  walletChargeFailedError,
+} from "../../lib/api-error.js";
+import { prisma } from "../../lib/prisma.js";
+import { unlockCompartment } from "../iot/adapter.js";
+
+const activeRentalStatuses: RentalStatus[] = [
+  "UNLOCKING",
+  "ACTIVE",
+  "RETURN_REQUESTED",
+  "WAITING_FOR_SENSOR",
+  "LATE",
+];
+
+const hourlyRentFee = 25_000;
+const graceToleranceMinutes = 15;
+const minimumDurationMinutes = 30;
+const maximumDurationMinutes = 360;
+const durationStepMinutes = 30;
+
+type Tx = Prisma.TransactionClient;
+
+type LockerForRental = Prisma.LockerGetPayload<{
+  include: {
+    compartments: {
+      orderBy: {
+        number: "asc";
+      };
+    };
+    cableUnits: true;
+  };
+}>;
+
+type RentalForResponse = Prisma.RentalGetPayload<{
+  include: {
+    locker: true;
+    compartment: true;
+  };
+}>;
+
+function iso(date: Date) {
+  return date.toISOString();
+}
+
+function validateDuration(durationMinutes: number) {
+  if (
+    durationMinutes < minimumDurationMinutes ||
+    durationMinutes > maximumDurationMinutes ||
+    durationMinutes % durationStepMinutes !== 0
+  ) {
+    throw validationError(
+      "Rental duration must be between 30 and 360 minutes in 30-minute steps.",
+      {
+        durationMinutes,
+        maximumDurationMinutes,
+        minimumDurationMinutes,
+        stepMinutes: durationStepMinutes,
+      },
+    );
+  }
+}
+
+function calculateRentFee(durationMinutes: number) {
+  return Math.ceil((durationMinutes * hourlyRentFee) / 60);
+}
+
+function calculateReturnTiming(dueAt: Date, now = new Date()) {
+  const timeLeftSeconds = Math.max(0, Math.floor((dueAt.getTime() - now.getTime()) / 1000));
+  const lateBySeconds = Math.max(0, Math.floor((now.getTime() - dueAt.getTime()) / 1000));
+  const billableLateSeconds = Math.max(
+    0,
+    Math.floor((now.getTime() - (dueAt.getTime() + graceToleranceMinutes * 60 * 1000)) / 1000),
+  );
+  const fine =
+    billableLateSeconds === 0 ? 0 : Math.ceil((billableLateSeconds * hourlyRentFee) / 3600);
+
+  return {
+    fine,
+    lateBySeconds,
+    timeLeftSeconds,
+  };
+}
+
+function availableCompartments(locker: LockerForRental) {
+  const availableCableUnitByCompartmentId = new Map(
+    locker.cableUnits
+      .filter(
+        (cableUnit) =>
+          cableUnit.status === "AVAILABLE" &&
+          cableUnit.currentLockerId === locker.id &&
+          cableUnit.currentCompartmentId,
+      )
+      .map((cableUnit) => [cableUnit.currentCompartmentId, cableUnit]),
+  );
+
+  return locker.compartments
+    .filter((compartment) => {
+      const cableUnit = availableCableUnitByCompartmentId.get(compartment.id);
+      return (
+        compartment.status === "AVAILABLE" &&
+        compartment.lastSensorState === "CABLE_PRESENT" &&
+        compartment.currentCableUnitId &&
+        cableUnit?.id === compartment.currentCableUnitId
+      );
+    })
+    .map((compartment) => ({
+      compartment,
+      cableUnit: availableCableUnitByCompartmentId.get(compartment.id)!,
+    }));
+}
+
+function toRentalDetail(rental: RentalForResponse, unlockRequestId?: string): RentalDetailResponse {
+  return {
+    id: rental.id,
+    status: rental.status,
+    locker: {
+      id: rental.locker.id,
+      name: rental.locker.name,
+    },
+    compartmentNumber: rental.compartment.number,
+    startedAt: iso(rental.startedAt),
+    dueAt: iso(rental.dueAt),
+    rentFee: rental.rentFee,
+    unlockRequestId,
+  };
+}
+
+function toActiveRental(rental: RentalForResponse): NonNullable<ActiveRentalResponse> {
+  const serverNow = new Date();
+  const timeLeftSeconds = Math.max(
+    0,
+    Math.floor((rental.dueAt.getTime() - serverNow.getTime()) / 1000),
+  );
+
+  return {
+    id: rental.id,
+    status: rental.status,
+    locker: {
+      id: rental.locker.id,
+      name: rental.locker.name,
+    },
+    compartmentNumber: rental.compartment.number,
+    startedAt: iso(rental.startedAt),
+    dueAt: iso(rental.dueAt),
+    serverNow: iso(serverNow),
+    timeLeftSeconds,
+    estimatedFee: rental.rentFee,
+    fine: rental.fine,
+  };
+}
+
+async function findLockerForRental(tx: Tx, lockerId: string) {
+  const locker = await tx.locker.findUnique({
+    where: { id: lockerId },
+    include: {
+      compartments: {
+        orderBy: {
+          number: "asc",
+        },
+      },
+      cableUnits: true,
+    },
+  });
+
+  if (!locker) {
+    throw lockerNotFoundError();
+  }
+
+  if (locker.status !== "ONLINE") {
+    throw lockerOfflineError();
+  }
+
+  return locker;
+}
+
+async function assertNoActiveRental(tx: Tx, userId: string) {
+  const activeRental = await tx.rental.findFirst({
+    where: {
+      userId,
+      status: {
+        in: activeRentalStatuses,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (activeRental) {
+    throw userHasActiveRentalError();
+  }
+}
+
+export async function createRentalQuote(
+  userId: string,
+  input: {
+    durationMinutes: number;
+    lockerId: string;
+  },
+): Promise<RentalQuoteResponse> {
+  validateDuration(input.durationMinutes);
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { status: true },
+  });
+
+  if (!user || user.status !== "ACTIVE") {
+    throw forbiddenError("Only active users can create rentals.");
+  }
+
+  await assertNoActiveRental(prisma, userId);
+  const locker = await findLockerForRental(prisma, input.lockerId);
+  const availableCableCount = availableCompartments(locker).length;
+
+  if (availableCableCount === 0) {
+    throw noCableAvailableError();
+  }
+
+  const rentFee = calculateRentFee(input.durationMinutes);
+
+  return {
+    lockerId: locker.id,
+    locationName: locker.name,
+    durationMinutes: input.durationMinutes,
+    rentFee,
+    depositAmount: 0,
+    totalCharge: rentFee,
+    availableCableCount,
+  };
+}
+
+export async function createRental(
+  userId: string,
+  input: {
+    compartmentId?: string;
+    durationMinutes: number;
+    lockerId: string;
+    paymentSource: "WALLET";
+  },
+): Promise<RentalDetailResponse> {
+  validateDuration(input.durationMinutes);
+
+  if (input.paymentSource !== "WALLET") {
+    throw validationError("Only wallet payment is supported for MVP rentals.");
+  }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { status: true },
+    });
+
+    if (!user || user.status !== "ACTIVE") {
+      throw forbiddenError("Only active users can create rentals.");
+    }
+
+    await assertNoActiveRental(tx, userId);
+    const locker = await findLockerForRental(tx, input.lockerId);
+    const available = availableCompartments(locker);
+    const selected = input.compartmentId
+      ? available.find(({ compartment }) => compartment.id === input.compartmentId)
+      : available[0];
+
+    if (!selected) {
+      if (
+        input.compartmentId &&
+        locker.compartments.some((compartment) => compartment.id === input.compartmentId)
+      ) {
+        throw qrInvalidError("Requested compartment is not available.");
+      }
+
+      if (input.compartmentId) {
+        throw qrInvalidError("Requested compartment does not belong to this locker.");
+      }
+
+      throw noCableAvailableError();
+    }
+
+    const wallet = await tx.wallet.findUnique({
+      where: { userId },
+    });
+    const rentFee = calculateRentFee(input.durationMinutes);
+
+    if (!wallet || wallet.balance < rentFee) {
+      throw insufficientBalanceError();
+    }
+
+    const chargedWallet = await tx.wallet.updateMany({
+      where: {
+        id: wallet.id,
+        balance: {
+          gte: rentFee,
+        },
+      },
+      data: {
+        balance: {
+          decrement: rentFee,
+        },
+      },
+    });
+
+    if (chargedWallet.count !== 1) {
+      throw walletChargeFailedError();
+    }
+
+    const startedAt = new Date();
+    const dueAt = new Date(startedAt.getTime() + input.durationMinutes * 60 * 1000);
+    const rental = await tx.rental.create({
+      data: {
+        userId,
+        lockerId: locker.id,
+        compartmentId: selected.compartment.id,
+        cableUnitId: selected.cableUnit.id,
+        status: "UNLOCKING",
+        durationMinutes: input.durationMinutes,
+        startedAt,
+        dueAt,
+        rentFee,
+        totalFee: rentFee,
+      },
+    });
+
+    const walletTransaction = await tx.walletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        type: "RENT_PAYMENT",
+        amount: rentFee,
+        direction: "DEBIT",
+        status: "SUCCESS",
+        referenceType: "RENTAL",
+        referenceId: rental.id,
+      },
+    });
+
+    await tx.compartment.update({
+      where: { id: selected.compartment.id },
+      data: {
+        lastSensorState: "CABLE_ABSENT",
+        status: "RENTED",
+      },
+    });
+
+    await tx.cableUnit.update({
+      where: { id: selected.cableUnit.id },
+      data: {
+        status: "RENTED",
+      },
+    });
+
+    await tx.notification.create({
+      data: {
+        userId,
+        type: "RENT_SUCCESS",
+        title: "Rent Success",
+        message: "Extension cable successfully unlocked. Your rental session has started.",
+        relatedRentalId: rental.id,
+        relatedTransactionId: walletTransaction.id,
+      },
+    });
+
+    return {
+      cableUnitId: selected.cableUnit.id,
+      compartmentId: selected.compartment.id,
+      rentalId: rental.id,
+      walletId: wallet.id,
+      rentFee,
+    };
+  });
+
+  try {
+    const unlockResult = await unlockCompartment({
+      compartmentId: created.compartmentId,
+      lockerId: input.lockerId,
+      rentalId: created.rentalId,
+    });
+
+    const rental = await prisma.rental.update({
+      where: { id: created.rentalId },
+      data: {
+        status: "ACTIVE",
+      },
+      include: {
+        locker: true,
+        compartment: true,
+      },
+    });
+
+    return toRentalDetail(rental, unlockResult.unlockRequestId);
+  } catch {
+    await compensateFailedUnlock(created);
+    throw unlockFailedError();
+  }
+}
+
+async function compensateFailedUnlock(created: {
+  cableUnitId: string;
+  compartmentId: string;
+  rentalId: string;
+  rentFee: number;
+  walletId: string;
+}) {
+  await prisma.$transaction(async (tx) => {
+    await tx.rental.update({
+      where: { id: created.rentalId },
+      data: { status: "FAILED" },
+    });
+    await tx.wallet.update({
+      where: { id: created.walletId },
+      data: {
+        balance: {
+          increment: created.rentFee,
+        },
+      },
+    });
+    await tx.walletTransaction.create({
+      data: {
+        walletId: created.walletId,
+        type: "REFUND",
+        amount: created.rentFee,
+        direction: "CREDIT",
+        status: "SUCCESS",
+        referenceType: "RENTAL",
+        referenceId: created.rentalId,
+      },
+    });
+    await tx.compartment.update({
+      where: { id: created.compartmentId },
+      data: {
+        lastSensorState: "CABLE_PRESENT",
+        status: "AVAILABLE",
+      },
+    });
+    await tx.cableUnit.update({
+      where: { id: created.cableUnitId },
+      data: {
+        status: "AVAILABLE",
+      },
+    });
+  });
+}
+
+export async function getActiveRental(userId: string): Promise<ActiveRentalResponse> {
+  const rental = await prisma.rental.findFirst({
+    where: {
+      userId,
+      status: {
+        in: activeRentalStatuses,
+      },
+    },
+    include: {
+      locker: true,
+      compartment: true,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (!rental) {
+    return null;
+  }
+
+  if (rental.status === "ACTIVE" && rental.dueAt.getTime() <= Date.now()) {
+    const lateRental = await prisma.rental.update({
+      where: { id: rental.id },
+      data: { status: "LATE" },
+      include: {
+        locker: true,
+        compartment: true,
+      },
+    });
+
+    return toActiveRental(lateRental);
+  }
+
+  return toActiveRental(rental);
+}
+
+export async function getRental(userId: string, rentalId: string): Promise<RentalDetailResponse> {
+  const rental = await prisma.rental.findUnique({
+    where: { id: rentalId },
+    include: {
+      locker: true,
+      compartment: true,
+    },
+  });
+
+  if (!rental) {
+    throw noActiveRentalError();
+  }
+
+  if (rental.userId !== userId) {
+    throw forbiddenError();
+  }
+
+  return toRentalDetail(rental);
+}
+
+export async function createReturnIntent(
+  userId: string,
+  rentalId: string,
+  input: {
+    lockerId?: string;
+  },
+): Promise<ReturnIntentResponse> {
+  return prisma.$transaction(async (tx) => {
+    const rental = await tx.rental.findUnique({
+      where: { id: rentalId },
+      include: {
+        locker: true,
+      },
+    });
+
+    if (!rental) {
+      throw noActiveRentalError();
+    }
+
+    if (rental.userId !== userId) {
+      throw forbiddenError();
+    }
+
+    const now = new Date();
+    const currentStatus =
+      rental.status === "ACTIVE" && rental.dueAt.getTime() <= now.getTime()
+        ? "LATE"
+        : rental.status;
+
+    if (!["ACTIVE", "LATE", "RETURN_REQUESTED"].includes(currentStatus)) {
+      throw returnNotVerifiedError("This rental cannot be returned.");
+    }
+
+    const returnLockerId = input.lockerId ?? rental.lockerId;
+    const returnLocker = await tx.locker.findUnique({
+      where: { id: returnLockerId },
+      include: {
+        compartments: {
+          orderBy: {
+            number: "asc",
+          },
+        },
+      },
+    });
+
+    if (!returnLocker) {
+      throw lockerNotFoundError();
+    }
+
+    if (returnLocker.status !== "ONLINE") {
+      throw lockerOfflineError();
+    }
+
+    const existingSession = await tx.returnSession.findFirst({
+      where: {
+        rentalId: rental.id,
+        status: {
+          in: ["READY_TO_RETURN", "LOCKER_OPENING", "WAITING_FOR_SENSOR"],
+        },
+      },
+      include: {
+        returnCompartment: true,
+        returnLocker: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    const returnCompartment =
+      existingSession?.returnCompartment ??
+      returnLocker.compartments.find(
+        (compartment) =>
+          ["EMPTY", "AVAILABLE"].includes(compartment.status) &&
+          compartment.lastSensorState !== "CABLE_PRESENT" &&
+          !compartment.currentCableUnitId,
+      );
+
+    if (!returnCompartment) {
+      throw noCableAvailableError();
+    }
+
+    const timing = calculateReturnTiming(rental.dueAt, now);
+    const finePaid =
+      timing.fine === 0 ||
+      Boolean(
+        await tx.walletTransaction.findFirst({
+          where: {
+            referenceId: rental.id,
+            referenceType: "RENTAL_FINE",
+            status: "SUCCESS",
+            type: "FINE_PAYMENT",
+          },
+          select: {
+            id: true,
+          },
+        }),
+      );
+
+    const returnSession =
+      existingSession ??
+      (await tx.returnSession.create({
+        data: {
+          rentalId: rental.id,
+          returnLockerId: returnLocker.id,
+          returnCompartmentId: returnCompartment.id,
+          status: "READY_TO_RETURN",
+        },
+        include: {
+          returnCompartment: true,
+          returnLocker: true,
+        },
+      }));
+
+    if (rental.status !== "RETURN_REQUESTED") {
+      await tx.rental.update({
+        where: { id: rental.id },
+        data: {
+          status: "RETURN_REQUESTED",
+        },
+      });
+    }
+
+    return {
+      rentalId: rental.id,
+      returnSessionId: returnSession.id,
+      returnLocation: returnSession.returnLocker.name,
+      compartmentNumber: returnSession.returnCompartment.number,
+      timeLeftSeconds: timing.timeLeftSeconds,
+      lateBySeconds: timing.lateBySeconds,
+      fine: timing.fine,
+      requiresFinePayment: timing.fine > 0 && !finePaid,
+      finePaid,
+      status: returnSession.status,
+    };
+  });
+}
+
+export { calculateReturnTiming, graceToleranceMinutes, hourlyRentFee };

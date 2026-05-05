@@ -78,7 +78,7 @@ export const demoNotifications = [
   {
     id: "ntf-4",
     title: "System Update",
-    message: "Demo data is ready for rent, top up, and return flows.",
+    message: "Locker rental, top up, and return flows are ready to use.",
     time: "16 Apr 2026",
     unread: false,
   },

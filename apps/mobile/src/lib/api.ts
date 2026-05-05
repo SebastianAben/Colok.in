@@ -4,16 +4,35 @@ import type {
   AuthResponse,
   ConfirmTopUpRequest,
   ConfirmTopUpResponse,
+  CreateRentalRequest,
   CreateTopUpRequest,
   CreateTopUpResponse,
+  ConfirmReturnResponse,
+  CreateFeedbackRequest,
+  CreateFeedbackResponse,
   LockerListItem,
   MeResponse,
   QrValidateRequest,
   QrValidateResponse,
+  ActiveRentalResponse,
+  RentalDetailResponse,
+  RentalQuoteRequest,
+  RentalQuoteResponse,
+  MarkNotificationReadResponse,
   TopUpDetailResponse,
+  NotificationListItem,
+  PayReturnFineResponse,
+  PushTokenResponse,
+  RegisterPushTokenRequest,
+  ReturnDetailResponse,
+  ReturnIntentRequest,
+  ReturnIntentResponse,
+  RevokePushTokenRequest,
+  TransactionListItem,
 } from "@colokin/shared";
 
 export const apiBaseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000/v1";
+const requestTimeoutMs = 10000;
 
 export class ApiClientError extends Error {
   readonly code: string;
@@ -39,6 +58,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -48,13 +69,34 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     headers.Authorization = `Bearer ${options.token}`;
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    headers,
-    method: options.method ?? (options.body === undefined ? "GET" : "POST"),
-  });
+  let response: Response;
 
-  const payload = (await response.json()) as ApiSuccess<T> | ApiErrorResponse;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      headers,
+      method: options.method ?? (options.body === undefined ? "GET" : "POST"),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    throw new ApiClientError(
+      0,
+      "NETWORK_ERROR",
+      error instanceof Error && error.name === "AbortError"
+        ? "Request timed out."
+        : "Unable to connect to Colok.in.",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  let payload: ApiSuccess<T> | ApiErrorResponse;
+
+  try {
+    payload = (await response.json()) as ApiSuccess<T> | ApiErrorResponse;
+  } catch {
+    throw new ApiClientError(response.status, "INVALID_RESPONSE", "Unexpected server response.");
+  }
 
   if (!response.ok || "error" in payload) {
     const error = "error" in payload ? payload.error : undefined;
@@ -104,6 +146,14 @@ export function logoutRequest(token: string | null) {
 
 export function getMeRequest(token: string) {
   return apiRequest<MeResponse>("/me", {
+    token,
+  });
+}
+
+export function createFeedbackRequest(token: string, input: CreateFeedbackRequest) {
+  return apiRequest<CreateFeedbackResponse>("/feedback", {
+    body: input,
+    method: "POST",
     token,
   });
 }
@@ -158,6 +208,101 @@ export function validateQrRequest(token: string, input: QrValidateRequest) {
   return apiRequest<QrValidateResponse>("/qr/validate", {
     body: input,
     method: "POST",
+    token,
+  });
+}
+
+export function getActiveRentalRequest(token: string) {
+  return apiRequest<ActiveRentalResponse>("/rentals/active", {
+    token,
+  });
+}
+
+export function createRentalQuoteRequest(token: string, input: RentalQuoteRequest) {
+  return apiRequest<RentalQuoteResponse>("/rentals/quote", {
+    body: input,
+    method: "POST",
+    token,
+  });
+}
+
+export function createRentalRequest(token: string, input: CreateRentalRequest) {
+  return apiRequest<RentalDetailResponse>("/rentals", {
+    body: input,
+    method: "POST",
+    token,
+  });
+}
+
+export function getRentalRequest(token: string, rentalId: string) {
+  return apiRequest<RentalDetailResponse>(`/rentals/${rentalId}`, {
+    token,
+  });
+}
+
+export function createReturnIntentRequest(
+  token: string,
+  rentalId: string,
+  input: ReturnIntentRequest,
+) {
+  return apiRequest<ReturnIntentResponse>(`/rentals/${rentalId}/return-intent`, {
+    body: input,
+    method: "POST",
+    token,
+  });
+}
+
+export function payReturnFineRequest(token: string, returnSessionId: string) {
+  return apiRequest<PayReturnFineResponse>(`/returns/${returnSessionId}/pay-fine`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function confirmReturnRequest(token: string, returnSessionId: string) {
+  return apiRequest<ConfirmReturnResponse>(`/returns/${returnSessionId}/confirm`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function getReturnSessionRequest(token: string, returnSessionId: string) {
+  return apiRequest<ReturnDetailResponse>(`/returns/${returnSessionId}`, {
+    token,
+  });
+}
+
+export function listTransactionsRequest(token: string) {
+  return apiRequest<TransactionListItem[]>("/transactions", {
+    token,
+  });
+}
+
+export function registerPushTokenRequest(token: string, input: RegisterPushTokenRequest) {
+  return apiRequest<PushTokenResponse>("/devices/push-token", {
+    body: input,
+    method: "POST",
+    token,
+  });
+}
+
+export function revokePushTokenRequest(token: string, input: RevokePushTokenRequest) {
+  return apiRequest<PushTokenResponse>("/devices/push-token", {
+    body: input,
+    method: "DELETE",
+    token,
+  });
+}
+
+export function listNotificationsRequest(token: string) {
+  return apiRequest<NotificationListItem[]>("/notifications", {
+    token,
+  });
+}
+
+export function markNotificationReadRequest(token: string, notificationId: string) {
+  return apiRequest<MarkNotificationReadResponse>(`/notifications/${notificationId}/read`, {
+    method: "PATCH",
     token,
   });
 }

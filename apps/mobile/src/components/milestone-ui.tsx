@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, usePathname } from "expo-router";
 import type { Href } from "expo-router";
-import type { ReactNode } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import type { ReactElement, ReactNode } from "react";
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import type { RefreshControlProps } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../auth/auth-context";
 import { colors, radii, spacing } from "../theme/colors";
@@ -25,11 +26,13 @@ const tabItems: Array<{ label: string; href: Href; icon: IconName }> = [
 export function ScreenShell({
   activeTab,
   children,
+  refreshControl,
   title,
   subtitle,
 }: {
   activeTab: string;
   children: ReactNode;
+  refreshControl?: ReactElement<RefreshControlProps>;
   title?: string;
   subtitle?: string;
 }) {
@@ -43,6 +46,7 @@ export function ScreenShell({
           styles.scrollContent,
           { paddingBottom: spacing.navHeight + insets.bottom + 48 },
         ]}
+        refreshControl={refreshControl}
         showsVerticalScrollIndicator={false}
       >
         {title ? (
@@ -65,9 +69,20 @@ export function AppHeader() {
   return (
     <View style={styles.header}>
       <View style={styles.headerIcon}>
-        <Ionicons name="flash" size={18} color={colors.primary} />
+        <Image
+          accessibilityIgnoresInvertColors
+          source={require("../../assets/images/logocolokin.png")}
+          style={styles.headerLogo}
+        />
       </View>
-      <Text style={styles.brand}>Colok.in</Text>
+      <View pointerEvents="none" style={styles.brandWrap}>
+        <Image
+          accessibilityIgnoresInvertColors
+          resizeMode="contain"
+          source={require("../../assets/images/logocolokin_text_transparent.png")}
+          style={styles.brandLogo}
+        />
+      </View>
       <View style={styles.avatar}>
         <Text style={styles.avatarText}>{initial}</Text>
       </View>
@@ -247,18 +262,25 @@ export const styles = StyleSheet.create({
   },
   headerIcon: {
     alignItems: "center",
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.border,
-    borderWidth: 1,
+    backgroundColor: "transparent",
     borderRadius: radii.pill,
-    height: 36,
+    height: 62,
     justifyContent: "center",
-    width: 36,
+    width: 62,
   },
-  brand: {
-    color: colors.text,
-    fontSize: 20,
-    fontWeight: "700",
+  headerLogo: {
+    height: 56,
+    width: 56,
+  },
+  brandLogo: {
+    height: 72,
+    width: 184,
+  },
+  brandWrap: {
+    alignItems: "center",
+    left: 0,
+    position: "absolute",
+    right: 0,
   },
   avatar: {
     alignItems: "center",

@@ -9,6 +9,7 @@ import {
   refreshRequest,
   registerRequest,
 } from "../lib/api";
+import { registerDevicePushToken, revokeRegisteredPushToken } from "../lib/notifications";
 
 type AuthSession = {
   accessToken: string;
@@ -83,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const profile = await getMeRequest(nextSession.accessToken);
     setMe(profile);
+    void registerDevicePushToken(nextSession.accessToken);
   }, []);
 
   const clearSession = useCallback(async () => {
@@ -126,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAccessToken(storedSession.accessToken);
           setRefreshToken(storedSession.refreshToken);
           setMe(profile);
+          void registerDevicePushToken(storedSession.accessToken);
         } catch {
           if (!cancelled) {
             await recoverWithRefreshToken(storedSession.refreshToken);
@@ -167,6 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
+      await revokeRegisteredPushToken(accessToken);
       await logoutRequest(accessToken);
     } finally {
       await clearSession();
