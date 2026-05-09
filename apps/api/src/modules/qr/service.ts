@@ -7,6 +7,7 @@ import {
   qrInvalidError,
   userHasActiveRentalError,
 } from "../../lib/api-error.js";
+import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
 
 const activeRentalStatuses: RentalStatus[] = [
@@ -61,6 +62,7 @@ function availableCompartments(locker: LockerForQr) {
 
   return locker.compartments.filter(
     (compartment) =>
+      (env.IOT_MODE === "mock" || [1, 2].includes(compartment.number)) &&
       compartment.status === "AVAILABLE" &&
       compartment.lastSensorState === "CABLE_PRESENT" &&
       compartment.currentCableUnitId &&

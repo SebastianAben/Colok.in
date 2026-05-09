@@ -6,8 +6,13 @@ x-api-environment: &api-environment
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
   JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
   JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
-  MQTT_URL: mqtt://mosquitto:1883
+  MQTT_URL: ${MQTT_URL:-mqtt://mosquitto:1883}
+  MQTT_USERNAME: ${MQTT_USERNAME:-}
+  MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+  MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:-colokin-api}
+  MQTT_KEEPALIVE_SECONDS: ${MQTT_KEEPALIVE_SECONDS:-60}
   IOT_MODE: ${IOT_MODE:-mock}
+  IOT_LOCKER_ID: ${IOT_LOCKER_ID:-lck_labtek_v_itb}
   FCM_ENABLED: ${FCM_ENABLED:-false}
   FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
   FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
@@ -23,8 +28,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mosquitto:
-        condition: service_started
     ports:
       - "${API_HOST_BIND:-127.0.0.1}:${API_HOST_PORT:-4000}:4000"
     healthcheck:
@@ -79,6 +82,8 @@ services:
 
   mosquitto:
     image: eclipse-mosquitto:2
+    profiles:
+      - local-mqtt
     restart: unless-stopped
     volumes:
       - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro

@@ -5,6 +5,7 @@ import { env } from "./lib/env.js";
 import { getHealthReport, type HealthReport } from "./lib/health.js";
 import { prisma } from "./lib/prisma.js";
 import { requestIdMiddleware } from "./middleware/request-id.js";
+import { startIotMqttBridge } from "./modules/iot/bridge.js";
 import { createV1Router } from "./modules/index.js";
 import { runRentalReminderSweep } from "./modules/rentals/reminders.js";
 
@@ -48,9 +49,11 @@ if (env.NODE_ENV !== "test") {
     });
   }, 60_000);
   reminderSweep.unref();
+  const iotBridge = startIotMqttBridge();
 
   const shutdown = async () => {
     clearInterval(reminderSweep);
+    iotBridge.stop();
     server.close(async () => {
       await prisma.$disconnect();
       process.exit(0);

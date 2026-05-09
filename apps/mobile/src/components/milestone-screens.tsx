@@ -3,6 +3,7 @@ import type {
   ActiveRentalResponse,
   ConfirmReturnResponse,
   NotificationListItem,
+  RentalDetailResponse,
   ReturnDetailResponse,
   ReturnIntentResponse,
   TransactionListItem,
@@ -44,6 +45,7 @@ import {
   createRentalRequest,
   createReturnIntentRequest,
   getActiveRentalRequest,
+  getRentalRequest,
   getReturnSessionRequest,
   listTransactionsRequest,
   listNotificationsRequest,
@@ -132,6 +134,20 @@ function messageFrom(error: unknown) {
   return "Request failed. Please try again.";
 }
 
+function routeToRentSuccess(rental: RentalDetailResponse) {
+  router.replace({
+    pathname: "/rent/success",
+    params: {
+      compartmentNumber: String(rental.compartmentNumber),
+      dueAt: rental.dueAt,
+      lockerName: rental.locker.name,
+      rentFee: String(rental.rentFee),
+      rentalId: rental.id,
+      unlockRequestId: rental.unlockRequestId ?? "",
+    },
+  });
+}
+
 type TransactionHistoryItem = Omit<Partial<TransactionListItem>, "type"> & {
   amount?: number;
   completedAt?: string | null;
@@ -187,6 +203,9 @@ const feedbackCategories = [
   { label: "Support", value: "SUPPORT" },
   { label: "Other", value: "OTHER" },
 ] as const;
+
+const rentalUnlockPollIntervalMs = 2500;
+const rentalUnlockTimeoutMs = 60000;
 
 function labelFromTransactionType(type?: string | null) {
   switch (type) {
@@ -1384,17 +1403,27 @@ export function RentReviewScreen() {
         paymentSource: "WALLET",
       });
       await refreshMe();
-      router.replace({
-        pathname: "/rent/success",
-        params: {
-          compartmentNumber: String(rental.compartmentNumber),
-          dueAt: rental.dueAt,
-          lockerName: rental.locker.name,
-          rentFee: String(rental.rentFee),
-          rentalId: rental.id,
-          unlockRequestId: rental.unlockRequestId ?? "",
-        },
-      });
+
+      if (rental.status === "UNLOCKING") {
+        router.replace({
+          pathname: "/rent/pending",
+          params: {
+            compartmentNumber: String(rental.compartmentNumber),
+            dueAt: rental.dueAt,
+            lockerName: rental.locker.name,
+            rentFee: String(rental.rentFee),
+            rentalId: rental.id,
+          },
+        });
+        return;
+      }
+
+      if (rental.status === "ACTIVE") {
+        routeToRentSuccess(rental);
+        return;
+      }
+
+      setError(`Rental is ${rental.status.toLowerCase().replaceAll("_", " ")}. Please try again.`);
     } catch (createError) {
       if (createError instanceof ApiClientError) {
         if (createError.code === "INSUFFICIENT_BALANCE") {
@@ -1437,6 +1466,180 @@ export function RentReviewScreen() {
         </View>
       ) : null}
     </ModalScreen>
+  );
+}
+
+export function RentPendingScreen() {
+  const params = useLocalSearchParams<{
+    compartmentNumber?: string;
+    dueAt?: string;
+    lockerName?: string;
+    rentFee?: string;
+    rentalId?: string;
+  }>();
+  const { accessToken, refreshMe } = useAuth();
+  const rentalId = params.rentalId ?? "";
+  const [checking, setChecking] = useState(true);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [statusLabel, setStatusLabel] = useState("Unlocking locker");
+  const [timedOut, setTimedOut] = useState(false);
+  const progress = Math.min(1, elapsedMs / rentalUnlockTimeoutMs);
+  const remainingSeconds = Math.max(0, Math.ceil((rentalUnlockTimeoutMs - elapsedMs) / 1000));
+  const dueAt = params.dueAt ? new Date(params.dueAt).toLocaleString("id-ID") : "-";
+
+  useEffect(() => {
+    if (!accessToken || !rentalId) {
+      setChecking(false);
+      setError("Rental detail is incomplete. Please scan the locker QR again.");
+      return;
+    }
+
+    const token = accessToken;
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
+
+    async function pollRental() {
+      const nextElapsedMs = Date.now() - startedAt;
+      let shouldPollAgain = true;
+
+      if (cancelled) {
+        return;
+      }
+
+      setElapsedMs(nextElapsedMs);
+
+      if (nextElapsedMs >= rentalUnlockTimeoutMs) {
+        shouldPollAgain = false;
+        setChecking(false);
+        setTimedOut(true);
+        setStatusLabel("Unlock taking longer than expected");
+        return;
+      }
+
+      setChecking(true);
+
+      try {
+        const rental = await getRentalRequest(token, rentalId);
+
+        if (cancelled) {
+          return;
+        }
+
+        setError(null);
+
+        if (rental.status === "ACTIVE") {
+          shouldPollAgain = false;
+          await refreshMe();
+
+          if (!cancelled) {
+            routeToRentSuccess(rental);
+          }
+          return;
+        }
+
+        if (rental.status === "FAILED" || rental.status === "CANCELLED") {
+          shouldPollAgain = false;
+          setChecking(false);
+          setStatusLabel("Unlock failed");
+          setError(
+            "The locker could not be unlocked. Please try another locker or contact support.",
+          );
+          return;
+        }
+
+        setStatusLabel(
+          rental.status === "UNLOCKING"
+            ? "Unlocking locker"
+            : rental.status.toLowerCase().replaceAll("_", " "),
+        );
+      } catch (pollError) {
+        if (!cancelled) {
+          setError(messageFrom(pollError));
+        }
+      } finally {
+        if (!cancelled && shouldPollAgain) {
+          setChecking(false);
+          timeoutId = setTimeout(pollRental, rentalUnlockPollIntervalMs);
+        }
+      }
+    }
+
+    setElapsedMs(0);
+    setError(null);
+    setTimedOut(false);
+    setStatusLabel("Unlocking locker");
+    void pollRental();
+
+    return () => {
+      cancelled = true;
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [accessToken, refreshMe, rentalId, retryNonce]);
+
+  function handleRetry() {
+    setRetryNonce((current) => current + 1);
+  }
+
+  return (
+    <ScreenShell
+      activeTab="Home"
+      title="Preparing Rental"
+      subtitle="Keep this screen open while the locker unlocks."
+    >
+      <Card style={screenStyles.pendingCard}>
+        <View style={screenStyles.pendingIconWrap}>
+          {checking && !timedOut ? (
+            <ActivityIndicator color={colors.accent} size="large" />
+          ) : (
+            <Ionicons
+              color={timedOut || error ? colors.warning : colors.accent}
+              name={timedOut || error ? "alert-circle-outline" : "lock-open-outline"}
+              size={34}
+            />
+          )}
+        </View>
+        <View style={screenStyles.pendingCopy}>
+          <Text style={screenStyles.pendingTitle}>{statusLabel}</Text>
+          <Text style={screenStyles.cardBody}>
+            {timedOut
+              ? "The request is still pending. Retry the status check before scanning another locker."
+              : "We are confirming the compartment sensor and will continue automatically once the rental is active."}
+          </Text>
+        </View>
+        <View style={screenStyles.pendingProgressTrack}>
+          <View style={[screenStyles.pendingProgressFill, { width: `${progress * 100}%` }]} />
+        </View>
+        <Text style={screenStyles.metaText}>
+          {timedOut ? "Status check paused" : `Timeout in ${remainingSeconds}s`}
+        </Text>
+      </Card>
+
+      <Card style={screenStyles.pendingDetailCard}>
+        <DetailRow label="Location" value={params.lockerName ?? demoLocker.name} />
+        <DetailRow
+          label="Locker"
+          value={(params.compartmentNumber ?? demoLocker.compartment).toString()}
+        />
+        <DetailRow label="Rent Fee" value={formatRupiah(Number(params.rentFee ?? 50000))} />
+        <DetailRow label="Due At" value={dueAt} />
+      </Card>
+
+      {error ? (
+        <View style={screenStyles.reviewErrorBox}>
+          <Text style={screenStyles.errorText}>{error}</Text>
+          <View style={screenStyles.pendingActions}>
+            <SecondaryButton label="Retry Status" onPress={handleRetry} />
+            <SecondaryButton label="Back Home" onPress={() => router.replace("/")} />
+          </View>
+        </View>
+      ) : null}
+    </ScreenShell>
   );
 }
 
@@ -2349,6 +2552,53 @@ const screenStyles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: 16,
+  },
+  pendingActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  pendingCard: {
+    alignItems: "center",
+    gap: 18,
+  },
+  pendingCopy: {
+    alignItems: "center",
+    gap: 8,
+  },
+  pendingDetailCard: {
+    gap: 2,
+  },
+  pendingIconWrap: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    height: 82,
+    justifyContent: "center",
+    width: 82,
+  },
+  pendingProgressFill: {
+    backgroundColor: colors.accent,
+    borderRadius: radii.pill,
+    height: "100%",
+  },
+  pendingProgressTrack: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    height: 12,
+    overflow: "hidden",
+    width: "100%",
+  },
+  pendingTitle: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "900",
+    lineHeight: 28,
+    textAlign: "center",
   },
   promo: {
     backgroundColor: colors.primaryDark,

@@ -1,6 +1,7 @@
 import mqtt from "mqtt";
 import { env } from "./env.js";
 import { prisma } from "./prisma.js";
+import { getIotMqttBridgeStatus } from "../modules/iot/bridge.js";
 
 export type HealthStatus = "ok" | "error" | "disabled";
 
@@ -21,10 +22,21 @@ async function checkDatabase(): Promise<HealthStatus> {
 }
 
 async function checkMqtt(): Promise<HealthStatus> {
+  if (env.IOT_MODE === "mock") {
+    return "disabled";
+  }
+
+  if (getIotMqttBridgeStatus() === "connected") {
+    return "ok";
+  }
+
   return new Promise((resolve) => {
     const client = mqtt.connect(env.MQTT_URL, {
       connectTimeout: 1500,
+      keepalive: env.MQTT_KEEPALIVE_SECONDS,
+      password: env.MQTT_PASSWORD,
       reconnectPeriod: 0,
+      username: env.MQTT_USERNAME,
     });
 
     const finish = (status: HealthStatus) => {
@@ -49,7 +61,7 @@ async function checkMqtt(): Promise<HealthStatus> {
 export async function getHealthReport(): Promise<HealthReport> {
   const [database, mqttStatus] = await Promise.all([checkDatabase(), checkMqtt()]);
   const fcm: HealthStatus = env.FCM_ENABLED ? "ok" : "disabled";
-  const status: HealthStatus = database === "ok" && mqttStatus === "ok" ? "ok" : "error";
+  const status: HealthStatus = database === "ok" && mqttStatus !== "error" ? "ok" : "error";
 
   return {
     status,

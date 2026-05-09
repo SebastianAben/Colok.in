@@ -19,6 +19,7 @@ import {
   validationError,
   walletChargeFailedError,
 } from "../../lib/api-error.js";
+import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { unlockCompartment } from "../iot/adapter.js";
 import { sendPushToUser } from "../notifications/service.js";
@@ -116,6 +117,7 @@ function availableCompartments(locker: LockerForRental) {
     .filter((compartment) => {
       const cableUnit = availableCableUnitByCompartmentId.get(compartment.id);
       return (
+        (env.IOT_MODE === "mock" || [1, 2].includes(compartment.number)) &&
         compartment.status === "AVAILABLE" &&
         compartment.lastSensorState === "CABLE_PRESENT" &&
         compartment.currentCableUnitId &&
@@ -355,7 +357,8 @@ export async function createRental(
     await tx.compartment.update({
       where: { id: selected.compartment.id },
       data: {
-        lastSensorState: "CABLE_ABSENT",
+        lastSensorState:
+          env.IOT_MODE === "mock" ? "CABLE_ABSENT" : selected.compartment.lastSensorState,
         status: "RENTED",
       },
     });
@@ -381,6 +384,7 @@ export async function createRental(
     return {
       cableUnitId: selected.cableUnit.id,
       compartmentId: selected.compartment.id,
+      compartmentNumber: selected.compartment.number,
       rentalId: rental.id,
       walletId: wallet.id,
       rentFee,
@@ -392,9 +396,22 @@ export async function createRental(
   try {
     const unlockResult = await unlockCompartment({
       compartmentId: created.compartmentId,
+      compartmentNumber: created.compartmentNumber,
       lockerId: input.lockerId,
       rentalId: created.rentalId,
     });
+
+    if (env.IOT_MODE !== "mock") {
+      const rental = await prisma.rental.findUniqueOrThrow({
+        where: { id: created.rentalId },
+        include: {
+          locker: true,
+          compartment: true,
+        },
+      });
+
+      return toRentalDetail(rental, unlockResult.unlockRequestId);
+    }
 
     const rental = await prisma.rental.update({
       where: { id: created.rentalId },
@@ -429,6 +446,7 @@ export async function createRental(
 async function compensateFailedUnlock(created: {
   cableUnitId: string;
   compartmentId: string;
+  compartmentNumber: number;
   rentalId: string;
   rentFee: number;
   walletId: string;

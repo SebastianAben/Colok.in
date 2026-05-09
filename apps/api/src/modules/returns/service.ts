@@ -211,11 +211,37 @@ export async function confirmReturn(
     });
   });
 
-  await openReturnCompartment({
-    compartmentId: returnSession.returnCompartmentId,
-    lockerId: returnSession.returnLockerId,
-    returnSessionId,
-  });
+  try {
+    await openReturnCompartment({
+      compartmentId: returnSession.returnCompartmentId,
+      compartmentNumber: returnSession.returnCompartment.number,
+      lockerId: returnSession.returnLockerId,
+      returnSessionId,
+    });
+  } catch {
+    await prisma.$transaction(async (tx) => {
+      await tx.returnSession.update({
+        where: { id: returnSessionId },
+        data: {
+          status: "FAILED",
+        },
+      });
+      await tx.rental.update({
+        where: { id: returnSession.rentalId },
+        data: {
+          status: "RETURN_REQUESTED",
+        },
+      });
+      await tx.compartment.update({
+        where: { id: returnSession.returnCompartmentId },
+        data: {
+          status: "EMPTY",
+        },
+      });
+    });
+
+    throw returnNotVerifiedError("Return locker could not be opened. Please try again.");
+  }
 
   return {
     returnSessionId: returnSession.id,
@@ -321,14 +347,16 @@ async function verifyReturn(tx: Tx, session: ReturnSessionForResponse) {
     },
   });
 
-  await tx.compartment.update({
-    where: { id: session.rental.compartmentId },
-    data: {
-      currentCableUnitId: null,
-      lastSensorState: "CABLE_ABSENT",
-      status: "EMPTY",
-    },
-  });
+  if (session.rental.compartmentId !== session.returnCompartmentId) {
+    await tx.compartment.update({
+      where: { id: session.rental.compartmentId },
+      data: {
+        currentCableUnitId: null,
+        lastSensorState: "CABLE_ABSENT",
+        status: "EMPTY",
+      },
+    });
+  }
 
   await tx.cableUnit.update({
     where: { id: session.rental.cableUnitId },
