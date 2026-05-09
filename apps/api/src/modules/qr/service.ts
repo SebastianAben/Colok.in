@@ -9,6 +9,7 @@ import {
 } from "../../lib/api-error.js";
 import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
+import { cleanupExpiredUnlockingRentals } from "../rentals/service.js";
 
 const activeRentalStatuses: RentalStatus[] = [
   "UNLOCKING",
@@ -77,6 +78,8 @@ export async function validateQr(
     intent: QrIntent;
   },
 ): Promise<QrValidateResponse> {
+  await cleanupExpiredUnlockingRentals(userId);
+
   const parsedPayload = parseLockerQrPayload(input.qrPayload);
   if (!parsedPayload) {
     throw qrInvalidError();

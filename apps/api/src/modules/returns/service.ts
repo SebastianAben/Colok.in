@@ -273,6 +273,16 @@ export async function getReturnSession(
       const timedOut = await tx.returnSession.update({
         where: { id: session.id },
         data: {
+          rental: {
+            update: {
+              status: "RETURN_REQUESTED",
+            },
+          },
+          returnCompartment: {
+            update: {
+              status: "EMPTY",
+            },
+          },
           status: "TIMEOUT",
         },
         include: {

@@ -996,6 +996,71 @@ describe("Milestone 6 active rental timer and notifications", () => {
 });
 
 describe("Milestone 7 return flow with fine payment", () => {
+  it("expires an unlocking rental after timeout, refunds the wallet, and clears the active card", async () => {
+    const auth = await registerTestUser();
+    await setWalletBalance(auth.userId, 50_000);
+    const locker = await createReturnReadyLocker();
+    const wallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: auth.userId } });
+    const rental = await prisma.rental.create({
+      data: {
+        userId: auth.userId,
+        lockerId: locker.lockerId,
+        compartmentId: locker.rentedCompartmentId,
+        cableUnitId: locker.cableUnitId,
+        status: "UNLOCKING",
+        durationMinutes: 30,
+        startedAt: new Date(Date.now() - 90 * 1000),
+        dueAt: new Date(Date.now() + 30 * 60 * 1000),
+        rentFee: 12_500,
+        totalFee: 12_500,
+        createdAt: new Date(Date.now() - 90 * 1000),
+      },
+    });
+    await prisma.wallet.update({
+      where: { id: wallet.id },
+      data: { balance: { decrement: 12_500 } },
+    });
+    await prisma.walletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        type: "RENT_PAYMENT",
+        amount: 12_500,
+        direction: "DEBIT",
+        status: "SUCCESS",
+        referenceType: "RENTAL",
+        referenceId: rental.id,
+      },
+    });
+
+    const active = await request(app)
+      .get("/v1/rentals/active")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(active.status).toBe(200);
+    expect(active.body.data).toBeNull();
+
+    const expiredRental = await prisma.rental.findUniqueOrThrow({ where: { id: rental.id } });
+    expect(expiredRental.status).toBe("FAILED");
+
+    const refundedWallet = await prisma.wallet.findUniqueOrThrow({
+      where: { userId: auth.userId },
+    });
+    expect(refundedWallet.balance).toBe(50_000);
+
+    await expect(
+      prisma.walletTransaction.findFirstOrThrow({
+        where: {
+          referenceId: rental.id,
+          referenceType: "RENTAL",
+          type: "REFUND",
+        },
+      }),
+    ).resolves.toMatchObject({
+      amount: 12_500,
+      status: "SUCCESS",
+    });
+  });
+
   it("creates a return intent for an active rental and returns no fine before due time", async () => {
     const auth = await registerTestUser();
     await setWalletBalance(auth.userId, 100000);
@@ -1163,7 +1228,7 @@ describe("Milestone 7 return flow with fine payment", () => {
     );
   });
 
-  it("does not close a return session that times out before sensor verification", async () => {
+  it("lets the user retry return when a return session times out before sensor verification", async () => {
     const auth = await registerTestUser();
     const locker = await createReturnReadyLocker();
     const rental = await createActiveRental(auth.userId, locker, {
@@ -1199,8 +1264,25 @@ describe("Milestone 7 return flow with fine payment", () => {
     });
 
     const updatedRental = await prisma.rental.findUniqueOrThrow({ where: { id: rental.id } });
-    expect(updatedRental.status).toBe("WAITING_FOR_SENSOR");
+    expect(updatedRental.status).toBe("RETURN_REQUESTED");
     expect(updatedRental.returnedAt).toBeNull();
+
+    const updatedCompartment = await prisma.compartment.findUniqueOrThrow({
+      where: { id: locker.returnCompartmentId },
+    });
+    expect(updatedCompartment.status).toBe("EMPTY");
+
+    const retry = await request(app)
+      .post(`/v1/rentals/${rental.id}/return-intent`)
+      .set("Authorization", `Bearer ${auth.accessToken}`)
+      .send({ lockerId: locker.lockerId });
+
+    expect(retry.status).toBe(200);
+    expect(retry.body.data).toMatchObject({
+      rentalId: rental.id,
+      status: "READY_TO_RETURN",
+    });
+    expect(retry.body.data.returnSessionId).not.toBe(returnSession.id);
   });
 });
 
