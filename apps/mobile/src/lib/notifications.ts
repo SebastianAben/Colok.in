@@ -36,12 +36,20 @@ async function ensureNotificationPermission() {
 
 export async function registerDevicePushToken(accessToken: string) {
   try {
+    if (Platform.OS === "ios" && Constants.appOwnership === "expo") {
+      return null;
+    }
+
     const granted = await ensureNotificationPermission();
     if (!granted) {
       return null;
     }
 
     if (Platform.OS === "android") {
+      await Notifications.setNotificationChannelAsync("transactions", {
+        name: "Transactions",
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
       await Notifications.setNotificationChannelAsync("rental-reminders", {
         name: "Rental reminders",
         importance: Notifications.AndroidImportance.DEFAULT,
@@ -49,7 +57,10 @@ export async function registerDevicePushToken(accessToken: string) {
     }
 
     const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId ?? undefined;
+      process.env.EXPO_PUBLIC_EAS_PROJECT_ID ??
+      Constants.expoConfig?.extra?.eas?.projectId ??
+      Constants.easConfig?.projectId ??
+      undefined;
     const expoToken = await Notifications.getExpoPushTokenAsync(
       projectId ? { projectId } : undefined,
     );

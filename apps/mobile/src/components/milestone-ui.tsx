@@ -110,7 +110,7 @@ export function BottomNavBar({ activeTab }: { activeTab: string }) {
             >
               {isScan ? (
                 <View style={styles.scanButton}>
-                  <Ionicons name="scan" size={28} color={colors.surface} />
+                  <Ionicons name="scan" size={28} color={colors.textOnPrimary} />
                 </View>
               ) : (
                 <Ionicons
@@ -212,7 +212,7 @@ export function SuccessScreen({
     <SafeAreaView style={styles.successPage}>
       <View style={styles.successCard}>
         <View style={styles.successIcon}>
-          <Ionicons name="checkmark" size={34} color={colors.surface} />
+          <Ionicons name="checkmark" size={34} color={colors.textOnPrimary} />
         </View>
         <Text style={styles.successTitle}>{title}</Text>
         <Text style={styles.successBody}>{body}</Text>
@@ -234,10 +234,10 @@ export function MetricBlock({ label, value }: { label: string; value: string }) 
 
 const baseShadow = {
   shadowColor: colors.shadow,
-  shadowOffset: { width: 0, height: 10 },
-  shadowOpacity: 0.08,
-  shadowRadius: 20,
-  elevation: 4,
+  shadowOffset: { width: 0, height: 12 },
+  shadowOpacity: 0.16,
+  shadowRadius: 24,
+  elevation: 5,
 };
 
 export const styles = StyleSheet.create({
@@ -248,17 +248,17 @@ export const styles = StyleSheet.create({
   scrollContent: {
     gap: spacing.section,
     paddingHorizontal: spacing.screen,
-    paddingTop: 12,
+    paddingTop: 18,
   },
   header: {
     alignItems: "center",
     backgroundColor: colors.backgroundDeep,
-    borderBottomColor: colors.border,
+    borderBottomColor: colors.navBorder,
     borderBottomWidth: 1,
     flexDirection: "row",
     justifyContent: "space-between",
     paddingHorizontal: spacing.screen,
-    paddingVertical: 12,
+    paddingVertical: 8,
   },
   headerIcon: {
     alignItems: "center",
@@ -284,14 +284,16 @@ export const styles = StyleSheet.create({
   },
   avatar: {
     alignItems: "center",
-    backgroundColor: colors.primary,
+    backgroundColor: colors.surfaceBlueAlt,
+    borderColor: colors.iconCircle,
+    borderWidth: 1,
     borderRadius: radii.pill,
     height: 36,
     justifyContent: "center",
     width: 36,
   },
   avatarText: {
-    color: colors.text,
+    color: colors.primary,
     fontSize: 16,
     fontWeight: "700",
   },
@@ -309,8 +311,8 @@ export const styles = StyleSheet.create({
     lineHeight: 20,
   },
   navWrap: {
-    backgroundColor: colors.backgroundDeep,
-    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    borderTopColor: colors.navBorder,
     borderTopWidth: 1,
     bottom: 0,
     left: 0,
@@ -336,7 +338,7 @@ export const styles = StyleSheet.create({
   scanButton: {
     alignItems: "center",
     backgroundColor: colors.primary,
-    borderColor: colors.background,
+    borderColor: colors.surface,
     borderRadius: radii.pill,
     borderWidth: 5,
     height: spacing.scanButton,
@@ -361,7 +363,7 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   primaryButtonText: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 16,
     fontWeight: "700",
   },
@@ -484,7 +486,7 @@ export const styles = StyleSheet.create({
     textAlign: "center",
   },
   metricBlock: {
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: colors.surfaceBlue,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radii.card,
@@ -493,7 +495,7 @@ export const styles = StyleSheet.create({
     padding: 14,
   },
   metricValue: {
-    color: colors.text,
+    color: colors.textStrong,
     fontSize: 18,
     fontWeight: "800",
   },

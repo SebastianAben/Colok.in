@@ -18,6 +18,8 @@ beforeAll(async () => {
   process.env.JWT_REFRESH_SECRET ??= "dev_refresh_secret_change_me";
   process.env.MQTT_URL ??= "mqtt://127.0.0.1:1883";
   process.env.IOT_MODE ??= "mock";
+  process.env.PUSH_ENABLED = "false";
+  process.env.PUSH_PROVIDER = "expo";
   process.env.FCM_ENABLED = "false";
 
   await seedDemoData();

@@ -222,7 +222,7 @@ export function LocationSearchScreen() {
               ]}
             >
               <View style={styles.markerIcon}>
-                <Ionicons name="flash" size={16} color={colors.text} />
+                <Ionicons name="flash" size={16} color={colors.textOnPrimary} />
               </View>
               <View style={styles.flexText}>
                 <Text style={styles.rowTitle}>{locker.name}</Text>
@@ -290,7 +290,7 @@ const styles = StyleSheet.create({
   markerIcon: {
     alignItems: "center",
     backgroundColor: colors.primary,
-    borderColor: colors.background,
+    borderColor: colors.surface,
     borderRadius: radii.pill,
     borderWidth: 2,
     height: 34,

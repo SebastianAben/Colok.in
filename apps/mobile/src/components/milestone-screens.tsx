@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  ImageBackground,
   Modal,
   Pressable,
   RefreshControl,
@@ -403,7 +404,7 @@ export function HomeScreen() {
             <Ionicons
               name={balanceVisible ? "eye-outline" : "eye-off-outline"}
               size={22}
-              color={colors.text}
+              color={colors.textOnPrimary}
             />
           </Pressable>
         </View>
@@ -500,12 +501,19 @@ export function HomeScreen() {
         <Text style={screenStyles.errorText}>{activeRentalError}</Text>
       ) : null}
 
-      <View style={screenStyles.promo}>
+      <ImageBackground
+        accessibilityIgnoresInvertColors
+        imageStyle={screenStyles.promoImage}
+        resizeMode="cover"
+        source={{ uri: "https://picsum.photos/seed/colokin-campus-power/900/420" }}
+        style={screenStyles.promo}
+      >
+        <View style={screenStyles.promoOverlay} />
         <View style={screenStyles.promoBadge}>
           <Text style={screenStyles.promoBadgeText}>PROMO</Text>
         </View>
         <Text style={screenStyles.promoTitle}>Stay powered up at your favorite campus spot.</Text>
-      </View>
+      </ImageBackground>
 
       <Card>
         <View style={screenStyles.locationCardHeader}>
@@ -574,7 +582,7 @@ export function ScanScreen() {
         <View style={screenStyles.scanLine} />
       </View>
       <Pressable style={screenStyles.flashButton}>
-        <Ionicons name="flashlight-outline" size={24} color={colors.text} />
+        <Ionicons name="flashlight-outline" size={24} color={colors.textOnPrimary} />
       </Pressable>
       <Text style={screenStyles.flashLabel}>Flashlight</Text>
       <View style={screenStyles.manualCodeBox}>
@@ -786,6 +794,28 @@ export function NotificationsScreen() {
     void loadNotifications();
   }, [loadNotifications]);
 
+  useEffect(() => {
+    if (!accessToken) {
+      return undefined;
+    }
+
+    const interval = setInterval(() => {
+      if (AppState.currentState === "active") {
+        void loadNotifications({ showLoading: false });
+      }
+    }, 45000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void loadNotifications({ showLoading: false });
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, [accessToken, loadNotifications]);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -940,7 +970,7 @@ export function SettingsScreen() {
         onPress={() => setConfirmingLogout(true)}
         style={screenStyles.logoutButton}
       >
-        <Ionicons name="log-out-outline" size={18} color={colors.text} />
+        <Ionicons name="log-out-outline" size={18} color={colors.textOnPrimary} />
         <Text style={screenStyles.logoutButtonText}>Log Out</Text>
       </Pressable>
       <Modal
@@ -1863,7 +1893,7 @@ function MapLockerMarker({ top, left, muted }: { top: number; left: number; mute
         },
       ]}
     >
-      <Ionicons name="flash" size={18} color={colors.text} />
+      <Ionicons name="flash" size={18} color={colors.textOnPrimary} />
     </View>
   );
 }
@@ -1903,7 +1933,7 @@ const screenStyles = StyleSheet.create({
     color: colors.primary,
   },
   amountDebit: {
-    color: colors.accent,
+    color: colors.danger,
   },
   activeCard: {
     borderLeftColor: colors.accent,
@@ -1914,9 +1944,9 @@ const screenStyles = StyleSheet.create({
     gap: 16,
   },
   balanceAmount: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 30,
-    fontWeight: "800",
+    fontWeight: "900",
   },
   balanceCard: {
     backgroundColor: colors.primaryDark,
@@ -1927,9 +1957,9 @@ const screenStyles = StyleSheet.create({
     padding: spacing.card,
   },
   balanceLabel: {
-    color: colors.textSecondary,
+    color: "rgba(255,255,255,0.78)",
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   balanceTop: {
     alignItems: "flex-start",
@@ -1951,7 +1981,7 @@ const screenStyles = StyleSheet.create({
     fontWeight: "800",
   },
   warningText: {
-    color: colors.accent,
+    color: colors.warning,
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 18,
@@ -2013,8 +2043,8 @@ const screenStyles = StyleSheet.create({
   },
   flashButton: {
     alignItems: "center",
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.borderStrong,
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryDark,
     borderWidth: 1,
     borderRadius: radii.pill,
     height: 58,
@@ -2022,7 +2052,7 @@ const screenStyles = StyleSheet.create({
     width: 58,
   },
   flashLabel: {
-    color: colors.text,
+    color: colors.textStrong,
     fontSize: 13,
     fontWeight: "700",
   },
@@ -2060,7 +2090,7 @@ const screenStyles = StyleSheet.create({
   },
   iconCircle: {
     alignItems: "center",
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: colors.iconCircle,
     borderRadius: radii.pill,
     height: 42,
     justifyContent: "center",
@@ -2141,7 +2171,7 @@ const screenStyles = StyleSheet.create({
   },
   marker: {
     alignItems: "center",
-    borderColor: colors.background,
+    borderColor: colors.surface,
     borderRadius: radii.pill,
     borderWidth: 4,
     height: 48,
@@ -2226,7 +2256,7 @@ const screenStyles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   logoutButtonText: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 15,
     fontWeight: "900",
   },
@@ -2265,7 +2295,7 @@ const screenStyles = StyleSheet.create({
     fontWeight: "800",
   },
   segmentTextActive: {
-    color: colors.text,
+    color: colors.textOnPrimary,
   },
   settingToggleCard: {
     alignItems: "center",
@@ -2311,7 +2341,7 @@ const screenStyles = StyleSheet.create({
     width: 58,
   },
   profileAvatarText: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 22,
     fontWeight: "900",
   },
@@ -2321,13 +2351,24 @@ const screenStyles = StyleSheet.create({
     gap: 16,
   },
   promo: {
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.borderStrong,
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 18,
     minHeight: 148,
     overflow: "hidden",
     padding: spacing.card,
+  },
+  promoImage: {
+    opacity: 0.9,
+  },
+  promoOverlay: {
+    backgroundColor: "rgba(5, 17, 38, 0.52)",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
   },
   promoBadge: {
     alignSelf: "flex-start",
@@ -2342,7 +2383,7 @@ const screenStyles = StyleSheet.create({
     fontWeight: "900",
   },
   promoTitle: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 24,
     fontWeight: "900",
     lineHeight: 30,
@@ -2370,14 +2411,14 @@ const screenStyles = StyleSheet.create({
     position: "absolute",
   },
   scannerBrand: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 22,
     fontWeight: "900",
     position: "absolute",
     top: 64,
   },
   scannerInstruction: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 18,
     fontWeight: "800",
     lineHeight: 24,
@@ -2497,6 +2538,7 @@ const screenStyles = StyleSheet.create({
   },
   unreadCard: {
     borderColor: colors.primary,
+    backgroundColor: colors.surfaceBlue,
   },
   unreadDot: {
     backgroundColor: colors.primary,

@@ -14,6 +14,7 @@ import {
 import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { openReturnCompartment } from "../iot/adapter.js";
+import { sendPushToUser } from "../notifications/service.js";
 import { calculateReturnTiming } from "../rentals/service.js";
 
 const sensorTimeoutMinutes = 3;
@@ -232,15 +233,18 @@ export async function getReturnSession(
   userId: string,
   returnSessionId: string,
 ): Promise<ReturnDetailResponse> {
-  const returnSession = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const session = await getOwnedReturnSession(tx, userId, returnSessionId);
 
     if (session.status !== "WAITING_FOR_SENSOR") {
-      return session;
+      return {
+        notification: null,
+        session,
+      };
     }
 
     if (session.sensorTimeoutAt && session.sensorTimeoutAt.getTime() <= Date.now()) {
-      return tx.returnSession.update({
+      const timedOut = await tx.returnSession.update({
         where: { id: session.id },
         data: {
           status: "TIMEOUT",
@@ -251,16 +255,37 @@ export async function getReturnSession(
           returnLocker: true,
         },
       });
+
+      return {
+        notification: null,
+        session: timedOut,
+      };
     }
 
     if (env.IOT_MODE !== "mock") {
-      return session;
+      return {
+        notification: null,
+        session,
+      };
     }
 
     return verifyReturn(tx, session);
   });
 
-  return toReturnDetail(returnSession);
+  if (result.notification) {
+    await sendPushToUser(userId, {
+      title: result.notification.title,
+      body: result.notification.message,
+      data: {
+        notificationId: result.notification.id,
+        relatedRentalId: result.session.rentalId,
+        routeHint: "transactions",
+        type: "RETURN_SUCCESS",
+      },
+    });
+  }
+
+  return toReturnDetail(result.session);
 }
 
 async function verifyReturn(tx: Tx, session: ReturnSessionForResponse) {
@@ -314,7 +339,7 @@ async function verifyReturn(tx: Tx, session: ReturnSessionForResponse) {
     },
   });
 
-  await tx.notification.create({
+  const notification = await tx.notification.create({
     data: {
       userId: session.rental.userId,
       type: "RETURN_SUCCESS",
@@ -324,5 +349,8 @@ async function verifyReturn(tx: Tx, session: ReturnSessionForResponse) {
     },
   });
 
-  return updatedSession;
+  return {
+    notification,
+    session: updatedSession,
+  };
 }

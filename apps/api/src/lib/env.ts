@@ -9,6 +9,12 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16),
   MQTT_URL: z.string().url().default("mqtt://localhost:1883"),
   IOT_MODE: z.enum(["mock", "mqtt"]).default("mock"),
+  PUSH_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  PUSH_PROVIDER: z.enum(["expo"]).default("expo"),
+  EXPO_ACCESS_TOKEN: z.string().optional(),
   FCM_ENABLED: z
     .enum(["true", "false"])
     .default("false")

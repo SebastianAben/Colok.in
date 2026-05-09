@@ -247,7 +247,7 @@ export function QrScanScreen() {
             <Ionicons
               name={flashEnabled ? "flashlight" : "flashlight-outline"}
               size={22}
-              color={cameraGranted ? colors.text : colors.textDisabled}
+              color={cameraGranted ? colors.textOnPrimary : colors.textDisabled}
             />
             <Text style={[styles.flashLabel, !cameraGranted && styles.disabledText]}>
               Flashlight
@@ -295,7 +295,7 @@ const styles = StyleSheet.create({
     right: spacing.screen,
   },
   brand: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 22,
     fontWeight: "900",
   },
@@ -373,8 +373,8 @@ const styles = StyleSheet.create({
   flashButton: {
     alignItems: "center",
     alignSelf: "center",
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.borderStrong,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    borderColor: "rgba(255,255,255,0.28)",
     borderRadius: radii.pill,
     borderWidth: 1,
     flexDirection: "row",
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   flashLabel: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -398,7 +398,7 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   instruction: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 18,
     fontWeight: "800",
     lineHeight: 24,
@@ -433,7 +433,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   page: {
-    backgroundColor: colors.backgroundDeep,
+    backgroundColor: colors.primaryDark,
     flex: 1,
   },
   scanFrame: {

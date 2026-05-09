@@ -21,6 +21,7 @@ import {
 } from "../../lib/api-error.js";
 import { prisma } from "../../lib/prisma.js";
 import { unlockCompartment } from "../iot/adapter.js";
+import { sendPushToUser } from "../notifications/service.js";
 
 const activeRentalStatuses: RentalStatus[] = [
   "UNLOCKING",
@@ -366,7 +367,7 @@ export async function createRental(
       },
     });
 
-    await tx.notification.create({
+    const notification = await tx.notification.create({
       data: {
         userId,
         type: "RENT_SUCCESS",
@@ -383,6 +384,8 @@ export async function createRental(
       rentalId: rental.id,
       walletId: wallet.id,
       rentFee,
+      notificationId: notification.id,
+      walletTransactionId: walletTransaction.id,
     };
   });
 
@@ -404,6 +407,18 @@ export async function createRental(
       },
     });
 
+    await sendPushToUser(userId, {
+      title: "Rent Success",
+      body: "Extension cable successfully unlocked. Your rental session has started.",
+      data: {
+        notificationId: created.notificationId,
+        relatedRentalId: created.rentalId,
+        relatedTransactionId: created.walletTransactionId,
+        routeHint: "transactions",
+        type: "RENT_SUCCESS",
+      },
+    });
+
     return toRentalDetail(rental, unlockResult.unlockRequestId);
   } catch {
     await compensateFailedUnlock(created);
@@ -417,6 +432,8 @@ async function compensateFailedUnlock(created: {
   rentalId: string;
   rentFee: number;
   walletId: string;
+  notificationId: string;
+  walletTransactionId: string;
 }) {
   await prisma.$transaction(async (tx) => {
     await tx.rental.update({

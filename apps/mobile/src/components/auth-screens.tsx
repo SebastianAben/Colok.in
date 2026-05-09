@@ -78,7 +78,7 @@ export function LoginScreen() {
         style={[styles.primaryButton, loading && styles.disabledButton]}
       >
         {loading ? (
-          <ActivityIndicator color={colors.text} />
+          <ActivityIndicator color={colors.textOnPrimary} />
         ) : (
           <Text style={styles.primaryButtonText}>Log In</Text>
         )}
@@ -165,7 +165,7 @@ export function RegisterScreen() {
         style={[styles.primaryButton, loading && styles.disabledButton]}
       >
         {loading ? (
-          <ActivityIndicator color={colors.text} />
+          <ActivityIndicator color={colors.textOnPrimary} />
         ) : (
           <Text style={styles.primaryButtonText}>Create Account</Text>
         )}
@@ -306,6 +306,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 16,
     padding: spacing.card,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.14,
+    shadowRadius: 26,
+    elevation: 4,
   },
   title: {
     color: colors.text,
@@ -367,7 +372,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   primaryButtonText: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 16,
     fontWeight: "800",
   },

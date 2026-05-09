@@ -20,6 +20,7 @@
     "@colokin/shared": "workspace:*",
     "@prisma/client": "6",
     "dotenv": "latest",
+    "expo-server-sdk": "^6.1.0",
     "express": "latest",
     "firebase-admin": "^13.8.0",
     "jose": "^6.2.3",
