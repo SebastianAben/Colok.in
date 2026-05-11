@@ -3,6 +3,7 @@ import type { SensorState } from "@prisma/client";
 import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { sendPushToUser } from "../notifications/service.js";
+import { activateUnlockedRental } from "../rentals/service.js";
 import { detectionTopics, lockerStatusTopic } from "./adapter.js";
 
 type BridgeStatus = "disabled" | "connected" | "connecting" | "error";
@@ -188,30 +189,14 @@ async function processCableAbsent(compartmentId: string) {
     });
 
     if (!rental) {
-      return { rental: null };
+      return { notification: null, rental: null, walletTransactionId: null };
     }
 
-    await tx.rental.update({
-      where: { id: rental.id },
-      data: { status: "ACTIVE" },
-    });
+    const activation = await activateUnlockedRental(tx, rental.id);
 
-    await tx.compartment.update({
-      where: { id: compartment.id },
-      data: {
-        currentCableUnitId: null,
-        status: "EMPTY",
-      },
-    });
-
-    await tx.cableUnit.update({
-      where: { id: rental.cableUnitId },
-      data: {
-        currentCompartmentId: null,
-        currentLockerId: null,
-        status: "RENTED",
-      },
-    });
+    if (!activation) {
+      return { notification: null, rental: null, walletTransactionId: null };
+    }
 
     const notification = await tx.notification.findFirst({
       where: {
@@ -221,7 +206,11 @@ async function processCableAbsent(compartmentId: string) {
       orderBy: { createdAt: "desc" },
     });
 
-    return { notification, rental };
+    return {
+      notification,
+      rental: activation.rental,
+      walletTransactionId: activation.walletTransactionId,
+    };
   });
 
   if (result.rental && result.notification) {
@@ -231,6 +220,7 @@ async function processCableAbsent(compartmentId: string) {
       data: {
         notificationId: result.notification.id,
         relatedRentalId: result.rental.id,
+        relatedTransactionId: result.walletTransactionId,
         routeHint: "transactions",
         type: "RENT_SUCCESS",
       },

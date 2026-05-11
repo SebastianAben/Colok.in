@@ -23,7 +23,7 @@ function routeForNotification(notification: NotificationListItem) {
 }
 
 export function NotificationBridge() {
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const knownNotificationIds = useRef(new Set<string>());
   const bootstrapped = useRef(false);
   const [banner, setBanner] = useState<NotificationListItem | null>(null);
@@ -35,12 +35,14 @@ export function NotificationBridge() {
       }
 
       try {
-        await markNotificationReadRequest(accessToken, notificationId);
+        await withAuthenticatedRequest((token) =>
+          markNotificationReadRequest(token, notificationId),
+        );
       } catch {
         // Best effort only. The Notifications screen will refresh canonical read state.
       }
     },
-    [accessToken],
+    [accessToken, withAuthenticatedRequest],
   );
 
   const loadNewNotifications = useCallback(async () => {
@@ -49,7 +51,9 @@ export function NotificationBridge() {
     }
 
     try {
-      const notifications = await listNotificationsRequest(accessToken);
+      const notifications = await withAuthenticatedRequest((token) =>
+        listNotificationsRequest(token),
+      );
       const currentIds = new Set(notifications.map((notification) => notification.id));
 
       if (!bootstrapped.current) {
@@ -71,7 +75,7 @@ export function NotificationBridge() {
     } catch {
       // In-app banners are additive; API errors should not block the active screen.
     }
-  }, [accessToken]);
+  }, [accessToken, withAuthenticatedRequest]);
 
   useEffect(() => {
     if (!accessToken) {

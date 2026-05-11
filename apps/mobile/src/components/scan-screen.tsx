@@ -1,6 +1,6 @@
 import type { BarcodeScanningResult } from "expo-camera";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -49,15 +49,20 @@ function messageFrom(error: unknown) {
 
 export function QrScanScreen() {
   const params = useLocalSearchParams<{ lockerId?: string }>();
-  const { accessToken, refreshMe } = useAuth();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
   const [error, setError] = useState<string | null>(null);
   const [developerToolsVisible, setDeveloperToolsVisible] = useState(false);
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [manualPayload, setManualPayload] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [scannerActive, setScannerActive] = useState(true);
   const [scanPaused, setScanPaused] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const handlingPayloadRef = useRef(false);
+  const navigationInFlightRef = useRef(false);
+  const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanLineAnimation = useRef<ReturnType<typeof Animated.loop> | null>(null);
   const scanLineProgress = useRef(new Animated.Value(0)).current;
 
   const placeholderPayload = useMemo(() => {
@@ -72,7 +77,15 @@ export function QrScanScreen() {
     }
   }, [permission, requestPermission]);
 
-  useEffect(() => {
+  const stopScanLineAnimation = useCallback(() => {
+    scanLineAnimation.current?.stop();
+    scanLineAnimation.current = null;
+  }, []);
+
+  const startScanLineAnimation = useCallback(() => {
+    stopScanLineAnimation();
+    scanLineProgress.setValue(0);
+
     const animation = Animated.loop(
       Animated.sequence([
         Animated.timing(scanLineProgress, {
@@ -90,22 +103,76 @@ export function QrScanScreen() {
       ]),
     );
 
+    scanLineAnimation.current = animation;
     animation.start();
+  }, [scanLineProgress, stopScanLineAnimation]);
 
+  useFocusEffect(
+    useCallback(() => {
+      handlingPayloadRef.current = false;
+      navigationInFlightRef.current = false;
+      setProcessing(false);
+      setScannerActive(true);
+      setScanPaused(false);
+
+      if (pauseTimerRef.current) {
+        clearTimeout(pauseTimerRef.current);
+        pauseTimerRef.current = null;
+      }
+
+      startScanLineAnimation();
+
+      return () => {
+        setScannerActive(false);
+        setScanPaused(true);
+        stopScanLineAnimation();
+
+        if (pauseTimerRef.current) {
+          clearTimeout(pauseTimerRef.current);
+          pauseTimerRef.current = null;
+        }
+      };
+    }, [startScanLineAnimation, stopScanLineAnimation]),
+  );
+
+  useEffect(() => {
+    if (processing || !scannerActive) {
+      stopScanLineAnimation();
+      return;
+    }
+
+    startScanLineAnimation();
+  }, [processing, scannerActive, startScanLineAnimation, stopScanLineAnimation]);
+
+  useEffect(() => {
     return () => {
-      animation.stop();
+      stopScanLineAnimation();
+
+      if (pauseTimerRef.current) {
+        clearTimeout(pauseTimerRef.current);
+      }
     };
-  }, [scanLineProgress]);
+  }, [stopScanLineAnimation]);
 
   const handlePayload = useCallback(
     async (payload: string) => {
       const trimmedPayload = payload.trim();
 
-      if (!accessToken || !trimmedPayload || processing || scanPaused) {
+      if (
+        !accessToken ||
+        !trimmedPayload ||
+        processing ||
+        !scannerActive ||
+        scanPaused ||
+        handlingPayloadRef.current ||
+        navigationInFlightRef.current
+      ) {
         return;
       }
 
+      handlingPayloadRef.current = true;
       setProcessing(true);
+      setScannerActive(false);
       setScanPaused(true);
       setError(null);
       setSuccessMessage(null);
@@ -114,10 +181,13 @@ export function QrScanScreen() {
         const topUpPayload = parseTopUpPayload(trimmedPayload);
 
         if (topUpPayload) {
-          const response = await confirmTopUpRequest(accessToken, topUpPayload.topUpId, {
-            dummyQrPayload: trimmedPayload,
-          });
+          const response = await withAuthenticatedRequest((token) =>
+            confirmTopUpRequest(token, topUpPayload.topUpId, {
+              dummyQrPayload: trimmedPayload,
+            }),
+          );
           await refreshMe();
+          navigationInFlightRef.current = true;
           router.replace({
             pathname: "/top-up",
             params: {
@@ -130,11 +200,14 @@ export function QrScanScreen() {
           return;
         }
 
-        const response = await validateQrRequest(accessToken, {
-          intent: "RENT",
-          qrPayload: trimmedPayload,
-        });
+        const response = await withAuthenticatedRequest((token) =>
+          validateQrRequest(token, {
+            intent: "RENT",
+            qrPayload: trimmedPayload,
+          }),
+        );
 
+        navigationInFlightRef.current = true;
         router.push({
           pathname: "/rent/duration",
           params: {
@@ -151,10 +224,25 @@ export function QrScanScreen() {
         setError(messageFrom(scanError));
       } finally {
         setProcessing(false);
-        setTimeout(() => setScanPaused(false), 1400);
+        handlingPayloadRef.current = false;
+
+        if (pauseTimerRef.current) {
+          clearTimeout(pauseTimerRef.current);
+          pauseTimerRef.current = null;
+        }
+
+        if (navigationInFlightRef.current) {
+          return;
+        }
+
+        pauseTimerRef.current = setTimeout(() => {
+          setScannerActive(true);
+          setScanPaused(false);
+          pauseTimerRef.current = null;
+        }, 1400);
       }
     },
-    [accessToken, processing, refreshMe, scanPaused],
+    [accessToken, processing, refreshMe, scanPaused, scannerActive, withAuthenticatedRequest],
   );
 
   function handleBarcodeScanned(result: BarcodeScanningResult) {
@@ -174,11 +262,15 @@ export function QrScanScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboardView}
       >
-        {cameraGranted ? (
+        {cameraGranted && scannerActive ? (
           <CameraView
             barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
             enableTorch={flashEnabled}
-            onBarcodeScanned={processing || scanPaused ? undefined : handleBarcodeScanned}
+            onBarcodeScanned={
+              processing || scanPaused || !scannerActive || navigationInFlightRef.current
+                ? undefined
+                : handleBarcodeScanned
+            }
             style={StyleSheet.absoluteFill}
           />
         ) : null}

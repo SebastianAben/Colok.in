@@ -278,7 +278,7 @@ function transactionDirection(transaction: TransactionHistoryItem) {
 }
 
 export function HomeScreen() {
-  const { accessToken, me, refreshMe } = useAuth();
+  const { accessToken, me, refreshMe, withAuthenticatedRequest } = useAuth();
   const [activeRental, setActiveRental] = useState<ActiveRentalResponse>(null);
   const [activeRentalError, setActiveRentalError] = useState<string | null>(null);
   const [activeRentalLoading, setActiveRentalLoading] = useState(false);
@@ -317,7 +317,7 @@ export function HomeScreen() {
       setActiveRentalError(null);
 
       try {
-        const rental = await getActiveRentalRequest(accessToken);
+        const rental = await withAuthenticatedRequest((token) => getActiveRentalRequest(token));
         setActiveRental(rental);
         setTimerNowMs(Date.now());
         setTimerSkipOffsetMs(0);
@@ -331,7 +331,7 @@ export function HomeScreen() {
         }
       }
     },
-    [accessToken],
+    [accessToken, withAuthenticatedRequest],
   );
 
   useEffect(() => {
@@ -622,7 +622,7 @@ export function ScanScreen() {
 }
 
 export function TransactionsScreen() {
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -641,7 +641,7 @@ export function TransactionsScreen() {
       setError(null);
 
       try {
-        setTransactions(await listTransactionsRequest(accessToken));
+        setTransactions(await withAuthenticatedRequest((token) => listTransactionsRequest(token)));
       } catch (loadError) {
         setError(messageFrom(loadError));
       } finally {
@@ -650,7 +650,7 @@ export function TransactionsScreen() {
         }
       }
     },
-    [accessToken],
+    [accessToken, withAuthenticatedRequest],
   );
 
   useEffect(() => {
@@ -778,7 +778,7 @@ export function TransactionsScreen() {
 }
 
 export function NotificationsScreen() {
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [notifications, setNotifications] = useState<NotificationListItem[]>([]);
@@ -797,7 +797,9 @@ export function NotificationsScreen() {
       setError(null);
 
       try {
-        setNotifications(await listNotificationsRequest(accessToken));
+        setNotifications(
+          await withAuthenticatedRequest((token) => listNotificationsRequest(token)),
+        );
       } catch (loadError) {
         setError(messageFrom(loadError));
       } finally {
@@ -806,7 +808,7 @@ export function NotificationsScreen() {
         }
       }
     },
-    [accessToken],
+    [accessToken, withAuthenticatedRequest],
   );
 
   useEffect(() => {
@@ -865,7 +867,9 @@ export function NotificationsScreen() {
         );
 
         try {
-          await markNotificationReadRequest(accessToken, notification.id);
+          await withAuthenticatedRequest((token) =>
+            markNotificationReadRequest(token, notification.id),
+          );
         } catch {
           await loadNotifications({ showLoading: false });
         }
@@ -875,7 +879,7 @@ export function NotificationsScreen() {
         router.push("/transactions");
       }
     },
-    [accessToken, loadNotifications],
+    [accessToken, loadNotifications, withAuthenticatedRequest],
   );
 
   return (
@@ -1110,7 +1114,7 @@ export function TermsPoliciesScreen() {
 }
 
 export function FeedbackScreen() {
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const [category, setCategory] = useState<(typeof feedbackCategories)[number]["value"]>("SUPPORT");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -1134,11 +1138,13 @@ export function FeedbackScreen() {
 
     setSubmitting(true);
     try {
-      const response = await createFeedbackRequest(accessToken, {
-        category,
-        subject,
-        message,
-      });
+      const response = await withAuthenticatedRequest((token) =>
+        createFeedbackRequest(token, {
+          category,
+          subject,
+          message,
+        }),
+      );
       setSubject("");
       setMessage("");
       setSuccess(`Feedback submitted. Ticket ${response.id.slice(-6).toUpperCase()} is open.`);
@@ -1283,7 +1289,7 @@ export function RentDurationScreen() {
     lockerId?: string;
     lockerName?: string;
   }>();
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const availableCableCount = params.availableCableCount ?? "3";
   const lockerId = params.lockerId ?? "lck_labtek_v_itb";
   const lockerName = params.lockerName ?? demoLocker.name;
@@ -1305,10 +1311,12 @@ export function RentDurationScreen() {
     setError(null);
 
     try {
-      const quote = await createRentalQuoteRequest(accessToken, {
-        durationMinutes,
-        lockerId,
-      });
+      const quote = await withAuthenticatedRequest((token) =>
+        createRentalQuoteRequest(token, {
+          durationMinutes,
+          lockerId,
+        }),
+      );
 
       router.push({
         pathname: "/rent/review",
@@ -1376,7 +1384,7 @@ export function RentReviewScreen() {
     rentFee?: string;
     totalCharge?: string;
   }>();
-  const { accessToken, me, refreshMe } = useAuth();
+  const { accessToken, me, refreshMe, withAuthenticatedRequest } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const durationMinutes = Number(params.durationMinutes ?? 120);
@@ -1396,12 +1404,14 @@ export function RentReviewScreen() {
     setError(null);
 
     try {
-      const rental = await createRentalRequest(accessToken, {
-        lockerId,
-        compartmentId: params.compartmentId || undefined,
-        durationMinutes,
-        paymentSource: "WALLET",
-      });
+      const rental = await withAuthenticatedRequest((token) =>
+        createRentalRequest(token, {
+          lockerId,
+          compartmentId: params.compartmentId || undefined,
+          durationMinutes,
+          paymentSource: "WALLET",
+        }),
+      );
       await refreshMe();
 
       if (rental.status === "UNLOCKING") {
@@ -1477,7 +1487,7 @@ export function RentPendingScreen() {
     rentFee?: string;
     rentalId?: string;
   }>();
-  const { accessToken, refreshMe } = useAuth();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
   const rentalId = params.rentalId ?? "";
   const [checking, setChecking] = useState(true);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -1496,7 +1506,6 @@ export function RentPendingScreen() {
       return;
     }
 
-    const token = accessToken;
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const startedAt = Date.now();
@@ -1517,7 +1526,9 @@ export function RentPendingScreen() {
         setStatusLabel("Checking final unlock status");
 
         try {
-          const rental = await getRentalRequest(token, rentalId);
+          const rental = await withAuthenticatedRequest((token) =>
+            getRentalRequest(token, rentalId),
+          );
 
           if (cancelled) {
             return;
@@ -1533,6 +1544,12 @@ export function RentPendingScreen() {
           }
 
           if (rental.status === "FAILED" || rental.status === "CANCELLED") {
+            await refreshMe();
+
+            if (cancelled) {
+              return;
+            }
+
             setTimedOut(false);
             setStatusLabel("Unlock failed");
             setError(
@@ -1554,7 +1571,7 @@ export function RentPendingScreen() {
       setChecking(true);
 
       try {
-        const rental = await getRentalRequest(token, rentalId);
+        const rental = await withAuthenticatedRequest((token) => getRentalRequest(token, rentalId));
 
         if (cancelled) {
           return;
@@ -1612,7 +1629,7 @@ export function RentPendingScreen() {
         clearTimeout(timeoutId);
       }
     };
-  }, [accessToken, refreshMe, rentalId, retryNonce]);
+  }, [accessToken, refreshMe, rentalId, retryNonce, withAuthenticatedRequest]);
 
   function handleRetry() {
     setRetryNonce((current) => current + 1);
@@ -1708,7 +1725,7 @@ export function RentSuccessScreen() {
 }
 
 export function ReturnReviewScreen() {
-  const { accessToken, refreshMe } = useAuth();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
   const [activeRental, setActiveRental] = useState<NonNullable<ActiveRentalResponse> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [finePaid, setFinePaid] = useState(false);
@@ -1728,7 +1745,7 @@ export function ReturnReviewScreen() {
     setShowTopUp(false);
 
     try {
-      const rental = await getActiveRentalRequest(accessToken);
+      const rental = await withAuthenticatedRequest((token) => getActiveRentalRequest(token));
 
       if (!rental) {
         setActiveRental(null);
@@ -1737,9 +1754,11 @@ export function ReturnReviewScreen() {
         return;
       }
 
-      const nextIntent = await createReturnIntentRequest(accessToken, rental.id, {
-        lockerId: rental.locker.id,
-      });
+      const nextIntent = await withAuthenticatedRequest((token) =>
+        createReturnIntentRequest(token, rental.id, {
+          lockerId: rental.locker.id,
+        }),
+      );
       const intentWithFineState = nextIntent as ReturnIntentResponse &
         Partial<{ finePaid: boolean; finePaidAt: string | null }>;
 
@@ -1751,7 +1770,7 @@ export function ReturnReviewScreen() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, withAuthenticatedRequest]);
 
   useEffect(() => {
     void loadReturnIntent();
@@ -1772,13 +1791,15 @@ export function ReturnReviewScreen() {
 
     try {
       if (fine > 0 && !finePaid) {
-        await payReturnFineRequest(accessToken, returnSessionId);
+        await withAuthenticatedRequest((token) => payReturnFineRequest(token, returnSessionId));
         await refreshMe();
         setFinePaid(true);
         return;
       }
 
-      const confirmation = await confirmReturnRequest(accessToken, returnSessionId);
+      const confirmation = await withAuthenticatedRequest((token) =>
+        confirmReturnRequest(token, returnSessionId),
+      );
       router.replace({
         pathname: "/return/instruction",
         params: {
@@ -1862,7 +1883,7 @@ export function ReturnInstructionScreen() {
     returnSessionId?: string;
     sensorTimeoutAt?: string;
   }>();
-  const { accessToken, refreshMe } = useAuth();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
   const [confirmation, setConfirmation] = useState<ConfirmReturnResponse | null>(null);
   const [detail, setDetail] = useState<ReturnDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1886,16 +1907,20 @@ export function ReturnInstructionScreen() {
 
     try {
       if (params.confirmed !== "1") {
-        setConfirmation(await confirmReturnRequest(accessToken, returnSessionId));
+        setConfirmation(
+          await withAuthenticatedRequest((token) => confirmReturnRequest(token, returnSessionId)),
+        );
       }
 
-      const firstDetail = await getReturnSessionRequest(accessToken, returnSessionId);
+      const firstDetail = await withAuthenticatedRequest((token) =>
+        getReturnSessionRequest(token, returnSessionId),
+      );
       setDetail(firstDetail);
     } catch (startError) {
       setError(messageFrom(startError));
       setPolling(false);
     }
-  }, [accessToken, params.confirmed, returnSessionId]);
+  }, [accessToken, params.confirmed, returnSessionId, withAuthenticatedRequest]);
 
   useEffect(() => {
     void startReturnConfirmation();
@@ -1906,13 +1931,14 @@ export function ReturnInstructionScreen() {
       return undefined;
     }
 
-    const token = accessToken;
     let cancelled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
     async function poll() {
       try {
-        const nextDetail = await getReturnSessionRequest(token, returnSessionId);
+        const nextDetail = await withAuthenticatedRequest((token) =>
+          getReturnSessionRequest(token, returnSessionId),
+        );
 
         if (cancelled) {
           return;
@@ -1961,7 +1987,7 @@ export function ReturnInstructionScreen() {
         clearTimeout(timeout);
       }
     };
-  }, [accessToken, lockerName, polling, refreshMe, returnSessionId]);
+  }, [accessToken, lockerName, polling, refreshMe, returnSessionId, withAuthenticatedRequest]);
 
   return (
     <ScreenShell activeTab="Home" title="Return Cable">

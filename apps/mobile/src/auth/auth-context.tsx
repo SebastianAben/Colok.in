@@ -1,7 +1,15 @@
 import type { AuthResponse, MeResponse } from "@colokin/shared";
 import * as SecureStore from "expo-secure-store";
 import type { ReactNode } from "react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   getMeRequest,
   loginRequest,
@@ -9,6 +17,7 @@ import {
   refreshRequest,
   registerRequest,
 } from "../lib/api";
+import { runAuthenticatedRequest, SessionExpiredError } from "../lib/authenticated-request";
 import { registerDevicePushToken, revokeRegisteredPushToken } from "../lib/notifications";
 
 type AuthSession = {
@@ -29,6 +38,7 @@ type AuthContextValue = {
     password: string;
     phone: string;
   }) => Promise<void>;
+  withAuthenticatedRequest: <T>(request: (accessToken: string) => Promise<T>) => Promise<T>;
 };
 
 const accessTokenKey = "colokin.accessToken";
@@ -75,32 +85,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [bootstrapping, setBootstrapping] = useState(true);
   const [me, setMe] = useState<MeResponse | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
+  const accessTokenRef = useRef<string | null>(null);
+  const refreshInFlightRef = useRef<Promise<string> | null>(null);
+  const refreshTokenRef = useRef<string | null>(null);
 
-  const applyAuthResponse = useCallback(async (response: AuthResponse) => {
-    const nextSession = sessionFromAuthResponse(response);
+  const applySession = useCallback(async (nextSession: AuthSession) => {
     await storeSession(nextSession);
+    accessTokenRef.current = nextSession.accessToken;
+    refreshTokenRef.current = nextSession.refreshToken;
     setAccessToken(nextSession.accessToken);
     setRefreshToken(nextSession.refreshToken);
-
-    const profile = await getMeRequest(nextSession.accessToken);
-    setMe(profile);
-    void registerDevicePushToken(nextSession.accessToken);
   }, []);
+
+  const applyAuthResponse = useCallback(
+    async (response: AuthResponse) => {
+      const nextSession = sessionFromAuthResponse(response);
+      await applySession(nextSession);
+      const profile = await getMeRequest(nextSession.accessToken);
+      setMe(profile);
+      void registerDevicePushToken(nextSession.accessToken);
+    },
+    [applySession],
+  );
 
   const clearSession = useCallback(async () => {
     await clearStoredSession();
+    accessTokenRef.current = null;
+    refreshTokenRef.current = null;
+    refreshInFlightRef.current = null;
     setAccessToken(null);
     setRefreshToken(null);
     setMe(null);
   }, []);
-
-  const refreshMe = useCallback(async () => {
-    if (!accessToken) {
-      return;
-    }
-
-    setMe(await getMeRequest(accessToken));
-  }, [accessToken]);
 
   const recoverWithRefreshToken = useCallback(
     async (storedRefreshToken: string) => {
@@ -109,6 +125,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     [applyAuthResponse],
   );
+
+  const refreshAccessToken = useCallback(async () => {
+    const currentRefreshToken = refreshTokenRef.current;
+
+    if (!currentRefreshToken) {
+      throw new SessionExpiredError();
+    }
+
+    if (!refreshInFlightRef.current) {
+      refreshInFlightRef.current = (async () => {
+        const response = await refreshRequest(currentRefreshToken);
+        const nextSession = sessionFromAuthResponse(response);
+        await applySession(nextSession);
+        void registerDevicePushToken(nextSession.accessToken);
+        return nextSession.accessToken;
+      })().finally(() => {
+        refreshInFlightRef.current = null;
+      });
+    }
+
+    return refreshInFlightRef.current;
+  }, [applySession]);
+
+  const withAuthenticatedRequest = useCallback(
+    async <T,>(request: (accessToken: string) => Promise<T>): Promise<T> => {
+      const currentAccessToken = accessTokenRef.current;
+
+      if (!currentAccessToken) {
+        throw new SessionExpiredError();
+      }
+
+      return runAuthenticatedRequest({
+        accessToken: currentAccessToken,
+        clearSession,
+        refreshAccessToken,
+        request,
+      });
+    },
+    [clearSession, refreshAccessToken],
+  );
+
+  const refreshMe = useCallback(async () => {
+    setMe(await withAuthenticatedRequest((token) => getMeRequest(token)));
+  }, [withAuthenticatedRequest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,8 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (cancelled) {
             return;
           }
-          setAccessToken(storedSession.accessToken);
-          setRefreshToken(storedSession.refreshToken);
+          await applySession(storedSession);
           setMe(profile);
           void registerDevicePushToken(storedSession.accessToken);
         } catch {
@@ -150,7 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [clearSession, recoverWithRefreshToken]);
+  }, [applySession, clearSession, recoverWithRefreshToken]);
 
   const login = useCallback(
     async (input: { emailOrPhone: string; password: string }) => {
@@ -186,8 +245,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       me,
       refreshMe,
       register,
+      withAuthenticatedRequest,
     }),
-    [accessToken, bootstrapping, login, logout, me, refreshMe, register],
+    [accessToken, bootstrapping, login, logout, me, refreshMe, register, withAuthenticatedRequest],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

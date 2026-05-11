@@ -8,6 +8,7 @@ let app: Awaited<typeof import("./server.js")>["app"];
 const demoUserId = "usr_demo_001";
 const demoWalletId = "wal_demo_001";
 const demoLockerId = "lck_labtek_v_itb";
+const libraryLockerId = "lck_perpustakaan_pusat_itb";
 let testUserCounter = 0;
 
 beforeAll(async () => {
@@ -139,8 +140,17 @@ describe("Milestone 2 backend foundation", () => {
         expect.objectContaining({
           id: demoLockerId,
           name: "Labtek V ITB",
-          availableCableCount: 3,
-          totalCompartments: 8,
+          availableCableCount: 2,
+          totalCompartments: 2,
+          status: "ONLINE",
+        }),
+        expect.objectContaining({
+          id: libraryLockerId,
+          name: "Perpustakaan Pusat ITB",
+          lat: -6.88784,
+          lng: 107.61078,
+          availableCableCount: 4,
+          totalCompartments: 4,
           status: "ONLINE",
         }),
       ]),
@@ -151,7 +161,7 @@ describe("Milestone 2 backend foundation", () => {
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.data).toMatchObject({
       id: demoLockerId,
-      availableCableCount: 3,
+      availableCableCount: 2,
       compartments: expect.arrayContaining([
         expect.objectContaining({
           id: "cmp_labtek_v_001",
@@ -541,7 +551,7 @@ describe("Milestone 5 rent flow with mock IoT", () => {
       rentFee: 50000,
       depositAmount: 0,
       totalCharge: 50000,
-      availableCableCount: 3,
+      availableCableCount: 2,
     });
   });
 
@@ -626,8 +636,9 @@ describe("Milestone 5 rent flow with mock IoT", () => {
     await expect(
       prisma.compartment.findUniqueOrThrow({ where: { id: locker.compartmentId } }),
     ).resolves.toMatchObject({
+      currentCableUnitId: null,
       lastSensorState: "CABLE_ABSENT",
-      status: "RENTED",
+      status: "EMPTY",
     });
     await expect(
       prisma.cableUnit.findUniqueOrThrow({ where: { id: locker.cableUnitId } }),
@@ -996,11 +1007,10 @@ describe("Milestone 6 active rental timer and notifications", () => {
 });
 
 describe("Milestone 7 return flow with fine payment", () => {
-  it("expires an unlocking rental after timeout, refunds the wallet, and clears the active card", async () => {
+  it("expires an unlocking rental after timeout without charging the wallet", async () => {
     const auth = await registerTestUser();
     await setWalletBalance(auth.userId, 50_000);
     const locker = await createReturnReadyLocker();
-    const wallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: auth.userId } });
     const rental = await prisma.rental.create({
       data: {
         userId: auth.userId,
@@ -1016,21 +1026,6 @@ describe("Milestone 7 return flow with fine payment", () => {
         createdAt: new Date(Date.now() - 90 * 1000),
       },
     });
-    await prisma.wallet.update({
-      where: { id: wallet.id },
-      data: { balance: { decrement: 12_500 } },
-    });
-    await prisma.walletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        type: "RENT_PAYMENT",
-        amount: 12_500,
-        direction: "DEBIT",
-        status: "SUCCESS",
-        referenceType: "RENTAL",
-        referenceId: rental.id,
-      },
-    });
 
     const active = await request(app)
       .get("/v1/rentals/active")
@@ -1042,23 +1037,22 @@ describe("Milestone 7 return flow with fine payment", () => {
     const expiredRental = await prisma.rental.findUniqueOrThrow({ where: { id: rental.id } });
     expect(expiredRental.status).toBe("FAILED");
 
-    const refundedWallet = await prisma.wallet.findUniqueOrThrow({
+    const wallet = await prisma.wallet.findUniqueOrThrow({
       where: { userId: auth.userId },
     });
-    expect(refundedWallet.balance).toBe(50_000);
+    expect(wallet.balance).toBe(50_000);
 
     await expect(
-      prisma.walletTransaction.findFirstOrThrow({
+      prisma.walletTransaction.count({
         where: {
           referenceId: rental.id,
           referenceType: "RENTAL",
-          type: "REFUND",
+          type: {
+            in: ["REFUND", "RENT_PAYMENT"],
+          },
         },
       }),
-    ).resolves.toMatchObject({
-      amount: 12_500,
-      status: "SUCCESS",
-    });
+    ).resolves.toBe(0);
   });
 
   it("creates a return intent for an active rental and returns no fine before due time", async () => {
@@ -1493,7 +1487,26 @@ async function seedDemoData() {
     },
   });
 
-  for (let number = 1; number <= 8; number += 1) {
+  const staleLabtekNumbers = Array.from({ length: 6 }, (_, index) => index + 3);
+  await prisma.cableUnit.deleteMany({
+    where: {
+      id: {
+        in: staleLabtekNumbers.map(
+          (number) => `cbl_labtek_v_${number.toString().padStart(3, "0")}`,
+        ),
+      },
+    },
+  });
+  await prisma.compartment.deleteMany({
+    where: {
+      lockerId: locker.id,
+      number: {
+        in: staleLabtekNumbers,
+      },
+    },
+  });
+
+  for (let number = 1; number <= 2; number += 1) {
     await prisma.compartment.upsert({
       where: {
         lockerId_number: {
@@ -1502,20 +1515,20 @@ async function seedDemoData() {
         },
       },
       update: {
-        status: number <= 3 ? "AVAILABLE" : "EMPTY",
-        lastSensorState: number <= 3 ? "CABLE_PRESENT" : "CABLE_ABSENT",
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
       },
       create: {
         id: `cmp_labtek_v_${number.toString().padStart(3, "0")}`,
         lockerId: locker.id,
         number,
-        status: number <= 3 ? "AVAILABLE" : "EMPTY",
-        lastSensorState: number <= 3 ? "CABLE_PRESENT" : "CABLE_ABSENT",
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
       },
     });
   }
 
-  for (let number = 1; number <= 3; number += 1) {
+  for (let number = 1; number <= 2; number += 1) {
     const compartmentId = `cmp_labtek_v_${number.toString().padStart(3, "0")}`;
     const cableUnit = await prisma.cableUnit.upsert({
       where: { serialNumber: `COL-ITB-${number.toString().padStart(3, "0")}` },
@@ -1535,6 +1548,81 @@ async function seedDemoData() {
         isSniCertified: true,
         hasOverloadProtection: true,
         currentLockerId: locker.id,
+        currentCompartmentId: compartmentId,
+      },
+    });
+
+    await prisma.compartment.update({
+      where: { id: compartmentId },
+      data: {
+        currentCableUnitId: cableUnit.id,
+      },
+    });
+  }
+
+  const libraryLocker = await prisma.locker.upsert({
+    where: { id: libraryLockerId },
+    update: {
+      name: "Perpustakaan Pusat ITB",
+      address: "Kampus ITB Ganesha, Bandung",
+      lat: -6.887839742717819,
+      lng: 107.61077991147646,
+      status: "ONLINE",
+      operationalHours: "24/7",
+      lastHeartbeatAt: new Date(),
+    },
+    create: {
+      id: libraryLockerId,
+      name: "Perpustakaan Pusat ITB",
+      address: "Kampus ITB Ganesha, Bandung",
+      lat: -6.887839742717819,
+      lng: 107.61077991147646,
+      status: "ONLINE",
+      operationalHours: "24/7",
+      lastHeartbeatAt: new Date(),
+    },
+  });
+
+  for (let number = 1; number <= 4; number += 1) {
+    const compartmentId = `cmp_perpus_pusat_${number.toString().padStart(3, "0")}`;
+    await prisma.compartment.upsert({
+      where: {
+        lockerId_number: {
+          lockerId: libraryLocker.id,
+          number,
+        },
+      },
+      update: {
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
+      },
+      create: {
+        id: compartmentId,
+        lockerId: libraryLocker.id,
+        number,
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
+      },
+    });
+
+    const cableUnit = await prisma.cableUnit.upsert({
+      where: { serialNumber: `COL-PERPUS-${number.toString().padStart(3, "0")}` },
+      update: {
+        status: "AVAILABLE",
+        specification: "Extension cable 4 outlet, 3 meter, 2500W",
+        isSniCertified: true,
+        hasOverloadProtection: true,
+        currentLockerId: libraryLocker.id,
+        currentCompartmentId: compartmentId,
+      },
+      create: {
+        id: `cbl_perpus_pusat_${number.toString().padStart(3, "0")}`,
+        serialNumber: `COL-PERPUS-${number.toString().padStart(3, "0")}`,
+        status: "AVAILABLE",
+        specification: "Extension cable 4 outlet, 3 meter, 2500W",
+        isSniCertified: true,
+        hasOverloadProtection: true,
+        currentLockerId: libraryLocker.id,
         currentCompartmentId: compartmentId,
       },
     });

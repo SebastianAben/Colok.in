@@ -48,7 +48,7 @@ export function TopUpScreen() {
     scanStatus?: string;
     scanTransactionId?: string;
   }>();
-  const { accessToken, refreshMe } = useAuth();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
   const [amountInput, setAmountInput] = useState("100000");
   const [confirming, setConfirming] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -76,7 +76,9 @@ export function TopUpScreen() {
     setSuccess(null);
 
     try {
-      const response = await createTopUpRequest(accessToken, { amount });
+      const response = await withAuthenticatedRequest((token) =>
+        createTopUpRequest(token, { amount }),
+      );
       setCreatedTopUp(response);
       setDeveloperPayloadVisible(false);
     } catch (createError) {
@@ -95,9 +97,11 @@ export function TopUpScreen() {
     setError(null);
 
     try {
-      const response = await confirmTopUpRequest(accessToken, createdTopUp.topUpId, {
-        dummyQrPayload: createdTopUp.dummyQrPayload,
-      });
+      const response = await withAuthenticatedRequest((token) =>
+        confirmTopUpRequest(token, createdTopUp.topUpId, {
+          dummyQrPayload: createdTopUp.dummyQrPayload,
+        }),
+      );
       setSuccess(response);
       await refreshMe();
     } catch (confirmError) {

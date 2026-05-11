@@ -45,6 +45,12 @@ describe("ESP32 MQTT bridge", () => {
         phone: `+62813${Date.now().toString().slice(-8)}`,
       },
     });
+    const wallet = await prisma.wallet.create({
+      data: {
+        balance: 25_000,
+        userId: user.id,
+      },
+    });
     const locker = await prisma.locker.create({
       data: {
         id: `${testPrefix}-locker-${unique}`,
@@ -95,6 +101,24 @@ describe("ESP32 MQTT bridge", () => {
       prisma.rental.findUniqueOrThrow({ where: { id: rental.id } }),
     ).resolves.toMatchObject({
       status: "ACTIVE",
+    });
+    await expect(
+      prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } }),
+    ).resolves.toMatchObject({
+      balance: 0,
+    });
+    await expect(
+      prisma.walletTransaction.findFirstOrThrow({
+        where: {
+          referenceId: rental.id,
+          referenceType: "RENTAL",
+          type: "RENT_PAYMENT",
+        },
+      }),
+    ).resolves.toMatchObject({
+      amount: 25_000,
+      direction: "DEBIT",
+      status: "SUCCESS",
     });
     await expect(
       prisma.compartment.findUniqueOrThrow({ where: { id: compartment.id } }),
@@ -165,25 +189,6 @@ describe("ESP32 MQTT bridge", () => {
         userId: user.id,
       },
     });
-    await prisma.wallet.update({
-      where: { id: wallet.id },
-      data: {
-        balance: {
-          decrement: rental.rentFee,
-        },
-      },
-    });
-    await prisma.walletTransaction.create({
-      data: {
-        amount: rental.rentFee,
-        direction: "DEBIT",
-        referenceId: rental.id,
-        referenceType: "RENTAL",
-        status: "SUCCESS",
-        type: "RENT_PAYMENT",
-        walletId: wallet.id,
-      },
-    });
 
     await handleMqttMessage("colokin/locker/99/detection", "EMPTY");
 
@@ -218,6 +223,97 @@ describe("ESP32 MQTT bridge", () => {
       currentCompartmentId: null,
       currentLockerId: null,
       status: "RENTED",
+    });
+  });
+
+  it("fails an unlocking rental and restores stock when pickup succeeds but wallet is insufficient", async () => {
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const user = await prisma.user.create({
+      data: {
+        email: `${testPrefix}-insufficient-${unique}@example.com`,
+        name: "IoT Bridge Insufficient Test",
+        passwordHash: "test",
+        phone: `+62815${Date.now().toString().slice(-8)}`,
+      },
+    });
+    await prisma.wallet.create({
+      data: {
+        balance: 10_000,
+        userId: user.id,
+      },
+    });
+    const locker = await prisma.locker.create({
+      data: {
+        id: `${testPrefix}-insufficient-locker-${unique}`,
+        address: "MQTT insufficient locker",
+        lat: -6.89,
+        lng: 107.61,
+        name: "MQTT Insufficient Locker",
+      },
+    });
+    const compartment = await prisma.compartment.create({
+      data: {
+        id: `${testPrefix}-insufficient-compartment-${unique}`,
+        currentCableUnitId: `${testPrefix}-insufficient-cable-${unique}`,
+        lastSensorState: "CABLE_PRESENT",
+        lockerId: locker.id,
+        number: 99,
+        status: "RENTED",
+      },
+    });
+    const cableUnit = await prisma.cableUnit.create({
+      data: {
+        id: `${testPrefix}-insufficient-cable-${unique}`,
+        currentCompartmentId: compartment.id,
+        currentLockerId: locker.id,
+        serialNumber: `${testPrefix}-insufficient-serial-${unique}`,
+        specification: "Test cable",
+        status: "RENTED",
+      },
+    });
+    const rental = await prisma.rental.create({
+      data: {
+        cableUnitId: cableUnit.id,
+        compartmentId: compartment.id,
+        dueAt: new Date(Date.now() + 60 * 60 * 1000),
+        durationMinutes: 60,
+        lockerId: locker.id,
+        rentFee: 25_000,
+        startedAt: new Date(),
+        status: "UNLOCKING",
+        totalFee: 25_000,
+        userId: user.id,
+      },
+    });
+
+    await handleMqttMessage("colokin/locker/99/detection", "EMPTY");
+
+    await expect(
+      prisma.rental.findUniqueOrThrow({ where: { id: rental.id } }),
+    ).resolves.toMatchObject({
+      status: "FAILED",
+    });
+    await expect(
+      prisma.walletTransaction.count({
+        where: {
+          referenceId: rental.id,
+          referenceType: "RENTAL",
+        },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      prisma.compartment.findUniqueOrThrow({ where: { id: compartment.id } }),
+    ).resolves.toMatchObject({
+      currentCableUnitId: cableUnit.id,
+      lastSensorState: "CABLE_PRESENT",
+      status: "AVAILABLE",
+    });
+    await expect(
+      prisma.cableUnit.findUniqueOrThrow({ where: { id: cableUnit.id } }),
+    ).resolves.toMatchObject({
+      currentCompartmentId: compartment.id,
+      currentLockerId: locker.id,
+      status: "AVAILABLE",
     });
   });
 });
