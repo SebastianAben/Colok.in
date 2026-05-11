@@ -15,16 +15,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../auth/auth-context";
-import { ApiClientError } from "../lib/api";
+import { messageFromAuthError } from "../lib/auth-errors";
 import { colors, radii, spacing } from "../theme/colors";
-
-function messageFrom(error: unknown) {
-  if (error instanceof ApiClientError) {
-    return error.message;
-  }
-
-  return "Unable to connect to Colok.in. Please try again.";
-}
 
 export function LoginScreen() {
   const { login } = useAuth();
@@ -42,7 +34,7 @@ export function LoginScreen() {
       await login({ emailOrPhone, password });
       router.replace("/home");
     } catch (submitError) {
-      setError(messageFrom(submitError));
+      setError(messageFromAuthError(submitError));
     } finally {
       setLoading(false);
     }
@@ -113,7 +105,7 @@ export function RegisterScreen() {
       await register({ email, name, password, phone });
       router.replace("/home");
     } catch (submitError) {
-      setError(messageFrom(submitError));
+      setError(messageFromAuthError(submitError));
     } finally {
       setLoading(false);
     }
