@@ -275,20 +275,31 @@ export async function getReturnSession(
         data: {
           rental: {
             update: {
-              status: "RETURN_REQUESTED",
+              status: "FAILED",
             },
           },
           returnCompartment: {
             update: {
+              currentCableUnitId: null,
+              lastSensorState: "CABLE_ABSENT",
               status: "EMPTY",
             },
           },
-          status: "TIMEOUT",
+          status: "FAILED",
         },
         include: {
           rental: true,
           returnCompartment: true,
           returnLocker: true,
+        },
+      });
+
+      await tx.cableUnit.update({
+        where: { id: session.rental.cableUnitId },
+        data: {
+          currentCompartmentId: null,
+          currentLockerId: null,
+          status: "LOST",
         },
       });
 

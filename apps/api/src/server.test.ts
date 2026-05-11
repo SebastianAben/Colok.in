@@ -1228,7 +1228,7 @@ describe("Milestone 7 return flow with fine payment", () => {
     );
   });
 
-  it("lets the user retry return when a return session times out before sensor verification", async () => {
+  it("marks the return as failed and the cable as lost when return sensor verification times out", async () => {
     const auth = await registerTestUser();
     const locker = await createReturnReadyLocker();
     const rental = await createActiveRental(auth.userId, locker, {
@@ -1259,30 +1259,26 @@ describe("Milestone 7 return flow with fine payment", () => {
     expect(response.body.data).toMatchObject({
       id: returnSession.id,
       rentalId: rental.id,
-      status: "TIMEOUT",
+      status: "FAILED",
       verifiedAt: null,
     });
 
-    const updatedRental = await prisma.rental.findUniqueOrThrow({ where: { id: rental.id } });
-    expect(updatedRental.status).toBe("RETURN_REQUESTED");
+    const updatedRental = await prisma.rental.findUniqueOrThrow({
+      where: { id: rental.id },
+      include: { cableUnit: true },
+    });
+    expect(updatedRental.status).toBe("FAILED");
     expect(updatedRental.returnedAt).toBeNull();
+    expect(updatedRental.cableUnit.status).toBe("LOST");
+    expect(updatedRental.cableUnit.currentCompartmentId).toBeNull();
+    expect(updatedRental.cableUnit.currentLockerId).toBeNull();
 
     const updatedCompartment = await prisma.compartment.findUniqueOrThrow({
       where: { id: locker.returnCompartmentId },
     });
     expect(updatedCompartment.status).toBe("EMPTY");
-
-    const retry = await request(app)
-      .post(`/v1/rentals/${rental.id}/return-intent`)
-      .set("Authorization", `Bearer ${auth.accessToken}`)
-      .send({ lockerId: locker.lockerId });
-
-    expect(retry.status).toBe(200);
-    expect(retry.body.data).toMatchObject({
-      rentalId: rental.id,
-      status: "READY_TO_RETURN",
-    });
-    expect(retry.body.data.returnSessionId).not.toBe(returnSession.id);
+    expect(updatedCompartment.lastSensorState).toBe("CABLE_ABSENT");
+    expect(updatedCompartment.currentCableUnitId).toBeNull();
   });
 });
 

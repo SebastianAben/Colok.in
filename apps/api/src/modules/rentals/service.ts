@@ -37,7 +37,7 @@ const graceToleranceMinutes = 15;
 const minimumDurationMinutes = 30;
 const maximumDurationMinutes = 360;
 const durationStepMinutes = 30;
-const rentalUnlockTimeoutMs = 60_000;
+export const rentalUnlockTimeoutMs = 60_000;
 
 type Tx = Prisma.TransactionClient;
 
@@ -215,7 +215,7 @@ async function assertNoActiveRental(tx: Tx, userId: string) {
   }
 }
 
-async function expireUnlockingRental(tx: Tx, rentalId: string) {
+export async function expireUnlockingRental(tx: Tx, rentalId: string) {
   const rental = await tx.rental.findUnique({
     where: { id: rentalId },
   });
@@ -242,6 +242,36 @@ async function expireUnlockingRental(tx: Tx, rentalId: string) {
       id: true,
     },
   });
+
+  const compartment = await tx.compartment.findUnique({
+    where: { id: rental.compartmentId },
+    select: { lastSensorState: true, status: true },
+  });
+
+  if (compartment?.lastSensorState === "CABLE_ABSENT" && compartment.status === "EMPTY") {
+    await tx.rental.update({
+      where: { id: rental.id },
+      data: { status: "ACTIVE" },
+    });
+    await tx.compartment.update({
+      where: { id: rental.compartmentId },
+      data: {
+        currentCableUnitId: null,
+        lastSensorState: "CABLE_ABSENT",
+        status: "EMPTY",
+      },
+    });
+    await tx.cableUnit.update({
+      where: { id: rental.cableUnitId },
+      data: {
+        currentCompartmentId: null,
+        currentLockerId: null,
+        status: "RENTED",
+      },
+    });
+
+    return rental.id;
+  }
 
   await tx.rental.update({
     where: { id: rental.id },

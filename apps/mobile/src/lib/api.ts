@@ -31,7 +31,7 @@ import type {
   TransactionListItem,
 } from "@colokin/shared";
 
-export const apiBaseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000/v1";
+export const apiBaseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://127.0.0.1:4000/v1";
 const requestTimeoutMs = 10000;
 
 export class ApiClientError extends Error {
@@ -83,8 +83,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       0,
       "NETWORK_ERROR",
       error instanceof Error && error.name === "AbortError"
-        ? "Request timed out."
-        : "Unable to connect to Colok.in.",
+        ? `Request timed out while connecting to ${apiBaseUrl}.`
+        : `Unable to connect to Colok.in at ${apiBaseUrl}.`,
     );
   } finally {
     clearTimeout(timeout);

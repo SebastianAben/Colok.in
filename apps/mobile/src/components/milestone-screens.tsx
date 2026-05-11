@@ -1514,8 +1514,40 @@ export function RentPendingScreen() {
       if (nextElapsedMs >= rentalUnlockTimeoutMs) {
         shouldPollAgain = false;
         setChecking(false);
+        setStatusLabel("Checking final unlock status");
+
+        try {
+          const rental = await getRentalRequest(token, rentalId);
+
+          if (cancelled) {
+            return;
+          }
+
+          if (rental.status === "ACTIVE") {
+            await refreshMe();
+
+            if (!cancelled) {
+              routeToRentSuccess(rental);
+            }
+            return;
+          }
+
+          if (rental.status === "FAILED" || rental.status === "CANCELLED") {
+            setTimedOut(false);
+            setStatusLabel("Unlock failed");
+            setError(
+              "The locker did not confirm cable pickup in time. Your rental was not started.",
+            );
+            return;
+          }
+        } catch (pollError) {
+          if (!cancelled) {
+            setError(messageFrom(pollError));
+          }
+        }
+
         setTimedOut(true);
-        setStatusLabel("Unlock taking longer than expected");
+        setStatusLabel("Unlock timed out");
         return;
       }
 
@@ -1608,7 +1640,7 @@ export function RentPendingScreen() {
           <Text style={screenStyles.pendingTitle}>{statusLabel}</Text>
           <Text style={screenStyles.cardBody}>
             {timedOut
-              ? "The request is still pending. Retry the status check before scanning another locker."
+              ? "The locker did not confirm cable pickup in time. Retry the status check before scanning another locker."
               : "We are confirming the compartment sensor and will continue automatically once the rental is active."}
           </Text>
         </View>
