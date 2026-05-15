@@ -14,6 +14,7 @@ import {
 import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { openReturnCompartment } from "../iot/adapter.js";
+import { sendPushToUser } from "../notifications/service.js";
 import { calculateReturnTiming } from "../rentals/service.js";
 
 const sensorTimeoutMinutes = 3;
@@ -210,11 +211,37 @@ export async function confirmReturn(
     });
   });
 
-  await openReturnCompartment({
-    compartmentId: returnSession.returnCompartmentId,
-    lockerId: returnSession.returnLockerId,
-    returnSessionId,
-  });
+  try {
+    await openReturnCompartment({
+      compartmentId: returnSession.returnCompartmentId,
+      compartmentNumber: returnSession.returnCompartment.number,
+      lockerId: returnSession.returnLockerId,
+      returnSessionId,
+    });
+  } catch {
+    await prisma.$transaction(async (tx) => {
+      await tx.returnSession.update({
+        where: { id: returnSessionId },
+        data: {
+          status: "FAILED",
+        },
+      });
+      await tx.rental.update({
+        where: { id: returnSession.rentalId },
+        data: {
+          status: "RETURN_REQUESTED",
+        },
+      });
+      await tx.compartment.update({
+        where: { id: returnSession.returnCompartmentId },
+        data: {
+          status: "EMPTY",
+        },
+      });
+    });
+
+    throw returnNotVerifiedError("Return locker could not be opened. Please try again.");
+  }
 
   return {
     returnSessionId: returnSession.id,
@@ -232,18 +259,33 @@ export async function getReturnSession(
   userId: string,
   returnSessionId: string,
 ): Promise<ReturnDetailResponse> {
-  const returnSession = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const session = await getOwnedReturnSession(tx, userId, returnSessionId);
 
     if (session.status !== "WAITING_FOR_SENSOR") {
-      return session;
+      return {
+        notification: null,
+        session,
+      };
     }
 
     if (session.sensorTimeoutAt && session.sensorTimeoutAt.getTime() <= Date.now()) {
-      return tx.returnSession.update({
+      const timedOut = await tx.returnSession.update({
         where: { id: session.id },
         data: {
-          status: "TIMEOUT",
+          rental: {
+            update: {
+              status: "FAILED",
+            },
+          },
+          returnCompartment: {
+            update: {
+              currentCableUnitId: null,
+              lastSensorState: "CABLE_ABSENT",
+              status: "EMPTY",
+            },
+          },
+          status: "FAILED",
         },
         include: {
           rental: true,
@@ -251,16 +293,46 @@ export async function getReturnSession(
           returnLocker: true,
         },
       });
+
+      await tx.cableUnit.update({
+        where: { id: session.rental.cableUnitId },
+        data: {
+          currentCompartmentId: null,
+          currentLockerId: null,
+          status: "LOST",
+        },
+      });
+
+      return {
+        notification: null,
+        session: timedOut,
+      };
     }
 
     if (env.IOT_MODE !== "mock") {
-      return session;
+      return {
+        notification: null,
+        session,
+      };
     }
 
     return verifyReturn(tx, session);
   });
 
-  return toReturnDetail(returnSession);
+  if (result.notification) {
+    await sendPushToUser(userId, {
+      title: result.notification.title,
+      body: result.notification.message,
+      data: {
+        notificationId: result.notification.id,
+        relatedRentalId: result.session.rentalId,
+        routeHint: "transactions",
+        type: "RETURN_SUCCESS",
+      },
+    });
+  }
+
+  return toReturnDetail(result.session);
 }
 
 async function verifyReturn(tx: Tx, session: ReturnSessionForResponse) {
@@ -296,14 +368,16 @@ async function verifyReturn(tx: Tx, session: ReturnSessionForResponse) {
     },
   });
 
-  await tx.compartment.update({
-    where: { id: session.rental.compartmentId },
-    data: {
-      currentCableUnitId: null,
-      lastSensorState: "CABLE_ABSENT",
-      status: "EMPTY",
-    },
-  });
+  if (session.rental.compartmentId !== session.returnCompartmentId) {
+    await tx.compartment.update({
+      where: { id: session.rental.compartmentId },
+      data: {
+        currentCableUnitId: null,
+        lastSensorState: "CABLE_ABSENT",
+        status: "EMPTY",
+      },
+    });
+  }
 
   await tx.cableUnit.update({
     where: { id: session.rental.cableUnitId },
@@ -314,7 +388,7 @@ async function verifyReturn(tx: Tx, session: ReturnSessionForResponse) {
     },
   });
 
-  await tx.notification.create({
+  const notification = await tx.notification.create({
     data: {
       userId: session.rental.userId,
       type: "RETURN_SUCCESS",
@@ -324,5 +398,8 @@ async function verifyReturn(tx: Tx, session: ReturnSessionForResponse) {
     },
   });
 
-  return updatedSession;
+  return {
+    notification,
+    session: updatedSession,
+  };
 }

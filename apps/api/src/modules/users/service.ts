@@ -2,6 +2,7 @@ import type { MeResponse } from "@colokin/shared";
 import { Prisma, type RentalStatus } from "@prisma/client";
 import { validationError } from "../../lib/api-error.js";
 import { prisma } from "../../lib/prisma.js";
+import { cleanupExpiredUnlockingRentals } from "../rentals/service.js";
 
 const activeRentalStatuses: RentalStatus[] = [
   "UNLOCKING",
@@ -12,6 +13,8 @@ const activeRentalStatuses: RentalStatus[] = [
 ];
 
 export async function getMe(userId: string): Promise<MeResponse> {
+  await cleanupExpiredUnlockingRentals(userId);
+
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: userId },
     include: {

@@ -48,7 +48,7 @@ export function TopUpScreen() {
     scanStatus?: string;
     scanTransactionId?: string;
   }>();
-  const { accessToken, refreshMe } = useAuth();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
   const [amountInput, setAmountInput] = useState("100000");
   const [confirming, setConfirming] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -76,7 +76,9 @@ export function TopUpScreen() {
     setSuccess(null);
 
     try {
-      const response = await createTopUpRequest(accessToken, { amount });
+      const response = await withAuthenticatedRequest((token) =>
+        createTopUpRequest(token, { amount }),
+      );
       setCreatedTopUp(response);
       setDeveloperPayloadVisible(false);
     } catch (createError) {
@@ -95,9 +97,11 @@ export function TopUpScreen() {
     setError(null);
 
     try {
-      const response = await confirmTopUpRequest(accessToken, createdTopUp.topUpId, {
-        dummyQrPayload: createdTopUp.dummyQrPayload,
-      });
+      const response = await withAuthenticatedRequest((token) =>
+        confirmTopUpRequest(token, createdTopUp.topUpId, {
+          dummyQrPayload: createdTopUp.dummyQrPayload,
+        }),
+      );
       setSuccess(response);
       await refreshMe();
     } catch (confirmError) {
@@ -140,7 +144,7 @@ export function TopUpScreen() {
       <SafeAreaView style={styles.page}>
         <View style={styles.successWrap}>
           <View style={styles.successIcon}>
-            <Ionicons name="checkmark" size={34} color={colors.surface} />
+            <Ionicons name="checkmark" size={34} color={colors.textOnPrimary} />
           </View>
           <Text style={styles.successTitle}>Top Up Success</Text>
           <Text style={styles.successBody}>
@@ -225,7 +229,7 @@ export function TopUpScreen() {
               style={[styles.actionButton, creating && styles.disabledButton]}
             >
               {creating ? (
-                <ActivityIndicator color={colors.text} />
+                <ActivityIndicator color={colors.textOnPrimary} />
               ) : (
                 <Text style={styles.actionButtonText}>Top Up</Text>
               )}
@@ -274,7 +278,7 @@ export function TopUpScreen() {
                 style={[styles.actionButton, confirming && styles.disabledButton]}
               >
                 {confirming ? (
-                  <ActivityIndicator color={colors.text} />
+                  <ActivityIndicator color={colors.textOnPrimary} />
                 ) : (
                   <Text style={styles.actionButtonText}>Confirm Payment</Text>
                 )}
@@ -409,7 +413,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   actionButtonText: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 16,
     fontWeight: "900",
   },

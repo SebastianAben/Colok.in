@@ -1,7 +1,6 @@
 import type { LockerListItem } from "@colokin/shared";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
-import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import MapView, { Marker } from "react-native-maps";
@@ -46,8 +45,17 @@ function firstVisibleLocker(lockers: LockerListItem[]) {
   return lockers.find((locker) => !isDeveloperTestLocker(locker)) ?? lockers[0] ?? null;
 }
 
+function LockerMetaRow({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; text: string }) {
+  return (
+    <View style={styles.metaRow}>
+      <Ionicons name={icon} size={15} color={colors.textMuted} />
+      <Text style={styles.metaText}>{text}</Text>
+    </View>
+  );
+}
+
 export function LocationSearchScreen() {
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [lockers, setLockers] = useState<LockerListItem[]>([]);
@@ -92,7 +100,9 @@ export function LocationSearchScreen() {
       setLocationDenied(permissionDenied);
 
       if (permissionDenied) {
-        const fallbackLockers = await listLockersRequest(accessToken);
+        const fallbackLockers = await withAuthenticatedRequest((token) =>
+          listLockersRequest(token),
+        );
         setLockers(fallbackLockers);
         setSelectedLockerId(firstVisibleLocker(fallbackLockers)?.id ?? null);
         return;
@@ -101,11 +111,13 @@ export function LocationSearchScreen() {
       const currentLocation = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
-      const nearbyLockers = await listLockersRequest(accessToken, {
-        lat: currentLocation.coords.latitude,
-        lng: currentLocation.coords.longitude,
-        radiusMeters: defaultRadiusMeters,
-      });
+      const nearbyLockers = await withAuthenticatedRequest((token) =>
+        listLockersRequest(token, {
+          lat: currentLocation.coords.latitude,
+          lng: currentLocation.coords.longitude,
+          radiusMeters: defaultRadiusMeters,
+        }),
+      );
 
       setLockers(nearbyLockers);
       setSelectedLockerId(firstVisibleLocker(nearbyLockers)?.id ?? null);
@@ -114,7 +126,7 @@ export function LocationSearchScreen() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, withAuthenticatedRequest]);
 
   useEffect(() => {
     void loadLockers();
@@ -178,12 +190,20 @@ export function LocationSearchScreen() {
       ) : null}
 
       {selectedLocker ? (
-        <Card>
+        <Card style={styles.selectedLockerCard}>
           <View style={styles.sheetHeader}>
+            <View style={styles.selectedMarkerIcon}>
+              <Ionicons name="flash" size={18} color={colors.accent} />
+            </View>
             <View style={styles.flexText}>
               <Text style={styles.cardTitle}>{selectedLocker.name}</Text>
-              <Text style={styles.cardBody}>{formatDistance(selectedLocker.distanceMeters)}</Text>
-              <Text style={styles.cardBody}>{selectedLocker.address}</Text>
+              <View style={styles.metaStack}>
+                <LockerMetaRow
+                  icon="navigate-outline"
+                  text={formatDistance(selectedLocker.distanceMeters)}
+                />
+                <LockerMetaRow icon="location-outline" text={selectedLocker.address} />
+              </View>
             </View>
             <StatusBadge
               label={selectedLocker.status}
@@ -197,15 +217,6 @@ export function LocationSearchScreen() {
             />
             <MetricBlock label="Open" value={selectedLocker.operationalHours} />
           </View>
-          <PrimaryButton
-            label="Scan QR"
-            onPress={() =>
-              router.push({
-                pathname: "/scan",
-                params: { lockerId: selectedLocker.id },
-              })
-            }
-          />
         </Card>
       ) : null}
 
@@ -222,7 +233,7 @@ export function LocationSearchScreen() {
               ]}
             >
               <View style={styles.markerIcon}>
-                <Ionicons name="flash" size={16} color={colors.text} />
+                <Ionicons name="flash" size={16} color={colors.textOnPrimary} />
               </View>
               <View style={styles.flexText}>
                 <Text style={styles.rowTitle}>{locker.name}</Text>
@@ -239,15 +250,11 @@ export function LocationSearchScreen() {
 }
 
 const styles = StyleSheet.create({
-  cardBody: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
   cardTitle: {
     color: colors.text,
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "800",
+    lineHeight: 24,
   },
   flexText: {
     flex: 1,
@@ -290,7 +297,7 @@ const styles = StyleSheet.create({
   markerIcon: {
     alignItems: "center",
     backgroundColor: colors.primary,
-    borderColor: colors.background,
+    borderColor: colors.surface,
     borderRadius: radii.pill,
     borderWidth: 2,
     height: 34,
@@ -298,8 +305,24 @@ const styles = StyleSheet.create({
     width: 34,
   },
   metricRow: {
+    alignItems: "stretch",
     flexDirection: "row",
     gap: 12,
+  },
+  metaRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  metaStack: {
+    gap: 7,
+  },
+  metaText: {
+    color: colors.textSecondary,
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    lineHeight: 20,
   },
   noticeCard: {
     alignItems: "center",
@@ -346,6 +369,21 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 14,
     fontWeight: "600",
+  },
+  selectedLockerCard: {
+    backgroundColor: colors.surfaceBlue,
+    borderColor: colors.borderStrong,
+    gap: 16,
+  },
+  selectedMarkerIcon: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: "center",
+    width: 42,
   },
   sheetHeader: {
     alignItems: "flex-start",

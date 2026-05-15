@@ -7,7 +7,9 @@ import {
   qrInvalidError,
   userHasActiveRentalError,
 } from "../../lib/api-error.js";
+import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
+import { cleanupExpiredUnlockingRentals } from "../rentals/service.js";
 
 const activeRentalStatuses: RentalStatus[] = [
   "UNLOCKING",
@@ -61,6 +63,7 @@ function availableCompartments(locker: LockerForQr) {
 
   return locker.compartments.filter(
     (compartment) =>
+      (env.IOT_MODE === "mock" || [1, 2].includes(compartment.number)) &&
       compartment.status === "AVAILABLE" &&
       compartment.lastSensorState === "CABLE_PRESENT" &&
       compartment.currentCableUnitId &&
@@ -75,6 +78,8 @@ export async function validateQr(
     intent: QrIntent;
   },
 ): Promise<QrValidateResponse> {
+  await cleanupExpiredUnlockingRentals(userId);
+
   const parsedPayload = parseLockerQrPayload(input.qrPayload);
   if (!parsedPayload) {
     throw qrInvalidError();

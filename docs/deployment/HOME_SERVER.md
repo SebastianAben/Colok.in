@@ -6,10 +6,10 @@ The API Docker image is built on GitHub-hosted Actions and pushed to GitHub Cont
 
 ## Environments
 
-| Branch | Environment | Server path                                | Local API port   | Public API                                |
-| ------ | ----------- | ------------------------------------------ | ---------------- | ----------------------------------------- |
-| `dev`  | dev         | `/home/froztbitez/web-server/colokin/dev`  | `127.0.0.1:4001` | `https://api-dev-colokin.albern.space/v1` |
-| `main` | prod        | `/home/froztbitez/web-server/colokin/prod` | `127.0.0.1:4000` | `https://api-colokin.albern.space/v1`     |
+| Branch | Environment | Server path                                | Host API port        | NPM upstream             | Public API                                |
+| ------ | ----------- | ------------------------------------------ | -------------------- | ------------------------ | ----------------------------------------- |
+| `dev`  | dev         | `/home/froztbitez/web-server/colokin/dev`  | `0.0.0.0:4001->4000` | `http://172.17.0.1:4001` | `https://api-dev-colokin.albern.space/v1` |
+| `main` | prod        | `/home/froztbitez/web-server/colokin/prod` | `0.0.0.0:4000->4000` | `http://172.17.0.1:4000` | `https://api-colokin.albern.space/v1`     |
 
 The two stacks use separate Compose project names and therefore separate PostgreSQL volumes.
 
@@ -103,13 +103,45 @@ Deploy steps:
 Cloudflare Tunnel should continue routing public traffic to Nginx Proxy Manager. Add two proxy hosts:
 
 ```text
-api-dev-colokin.albern.space -> http://127.0.0.1:4001
-api-colokin.albern.space     -> http://127.0.0.1:4000
+api-dev-colokin.albern.space -> http://172.17.0.1:4001
+api-colokin.albern.space     -> http://172.17.0.1:4000
 ```
 
-Keep PostgreSQL and Mosquitto private.
+Keep PostgreSQL private. Production ESP32 integration uses HiveMQ because ESP32 devices cannot rely
+on a broker running only inside the home-server LAN. Set these values in `.env.server.dev` or
+`.env.server.prod` after the HiveMQ cluster is created:
 
-If Nginx Proxy Manager runs in Docker bridge mode and cannot reach host loopback addresses, either run NPM with host networking, route through a host-reachable address, or switch this stack to a shared Docker network before enabling the public smoke test.
+```env
+IOT_MODE=mqtt
+MQTT_URL=mqtts://<hivemq-cluster-host>:8883
+MQTT_USERNAME=<hivemq-username>
+MQTT_PASSWORD=<hivemq-password>
+MQTT_CLIENT_ID=colokin-api-prod
+IOT_LOCKER_ID=lck_labtek_v_itb
+```
+
+The bundled Mosquitto service is retained only for local simulation and is behind the
+`local-mqtt` Compose profile. It is not required for HiveMQ production deployment.
+
+The ESP32 v1 protocol expects:
+
+```text
+Backend command topic: colokin/locker/control
+Backend commands: GIVE_1, GIVE_2, RECEIVE_1, RECEIVE_2
+ESP32 detection topics: colokin/locker/1/detection, colokin/locker/2/detection
+ESP32 detection payloads: EMPTY, OCCUPIED
+```
+
+Nginx Proxy Manager runs inside Docker, so `127.0.0.1` means the NPM container itself. The API
+containers must publish their host ports with `API_HOST_BIND=0.0.0.0`, and NPM should reach those
+host-published ports through Docker's host gateway address `172.17.0.1`.
+
+Verify from inside NPM before relying on the public hostname:
+
+```bash
+docker exec nginxproxymanager sh -lc 'curl -i http://172.17.0.1:4001/v1/health'
+docker exec nginxproxymanager sh -lc 'curl -i -H "Host: api-dev-colokin.albern.space" http://172.17.0.1/v1/health'
+```
 
 ## Manual Operations
 
@@ -144,10 +176,16 @@ Development/staging:
 
 ```env
 EXPO_PUBLIC_API_URL=https://api-dev-colokin.albern.space/v1
+EXPO_PUBLIC_EAS_PROJECT_ID=<eas-project-id-for-push-token-registration>
 ```
 
 Production/demo final:
 
 ```env
 EXPO_PUBLIC_API_URL=https://api-colokin.albern.space/v1
+EXPO_PUBLIC_EAS_PROJECT_ID=<eas-project-id-for-push-token-registration>
 ```
+
+`EXPO_PUBLIC_EAS_PROJECT_ID` is optional for local UI-only testing, but required for reliable Expo
+push token registration in Android APK/development builds. Expo Go on iOS intentionally skips remote
+token registration and uses in-app/local notification fallback behavior.

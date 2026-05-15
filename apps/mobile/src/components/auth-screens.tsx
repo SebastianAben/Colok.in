@@ -8,23 +8,17 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  type TextInputProps,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../auth/auth-context";
-import { ApiClientError } from "../lib/api";
+import { messageFromAuthError } from "../lib/auth-errors";
 import { colors, radii, spacing } from "../theme/colors";
-
-function messageFrom(error: unknown) {
-  if (error instanceof ApiClientError) {
-    return error.message;
-  }
-
-  return "Unable to connect to Colok.in. Please try again.";
-}
 
 export function LoginScreen() {
   const { login } = useAuth();
@@ -42,7 +36,7 @@ export function LoginScreen() {
       await login({ emailOrPhone, password });
       router.replace("/home");
     } catch (submitError) {
-      setError(messageFrom(submitError));
+      setError(messageFromAuthError(submitError));
     } finally {
       setLoading(false);
     }
@@ -57,17 +51,25 @@ export function LoginScreen() {
     >
       <FormField
         autoCapitalize="none"
+        autoComplete="email"
+        autoCorrect={false}
         keyboardType="email-address"
         label="Email or phone"
         onChangeText={setEmailOrPhone}
+        returnKeyType="next"
+        textContentType="username"
         value={emailOrPhone}
       />
       <FormField
+        autoComplete="current-password"
         label="Password"
         onChangeText={setPassword}
+        onSubmitEditing={submit}
         onToggleSecureText={() => setPasswordVisible((current) => !current)}
+        returnKeyType="done"
         secureTextEntry={!passwordVisible}
         secureToggleIcon={passwordVisible ? "eye-off-outline" : "eye-outline"}
+        textContentType="password"
         value={password}
       />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -78,7 +80,7 @@ export function LoginScreen() {
         style={[styles.primaryButton, loading && styles.disabledButton]}
       >
         {loading ? (
-          <ActivityIndicator color={colors.text} />
+          <ActivityIndicator color={colors.textOnPrimary} />
         ) : (
           <Text style={styles.primaryButtonText}>Log In</Text>
         )}
@@ -113,7 +115,7 @@ export function RegisterScreen() {
       await register({ email, name, password, phone });
       router.replace("/home");
     } catch (submitError) {
-      setError(messageFrom(submitError));
+      setError(messageFromAuthError(submitError));
     } finally {
       setLoading(false);
     }
@@ -126,35 +128,57 @@ export function RegisterScreen() {
       footerText="Already have an account?"
       title="Create account"
     >
-      <FormField label="Name" onChangeText={setName} value={name} />
+      <FormField
+        autoComplete="name"
+        label="Name"
+        onChangeText={setName}
+        returnKeyType="next"
+        textContentType="name"
+        value={name}
+      />
       <FormField
         autoCapitalize="none"
+        autoComplete="tel"
+        autoCorrect={false}
         keyboardType="phone-pad"
         label="Phone"
         onChangeText={setPhone}
+        returnKeyType="next"
+        textContentType="telephoneNumber"
         value={phone}
       />
       <FormField
         autoCapitalize="none"
+        autoComplete="email"
+        autoCorrect={false}
         keyboardType="email-address"
         label="Email"
         onChangeText={setEmail}
+        returnKeyType="next"
+        textContentType="emailAddress"
         value={email}
       />
       <FormField
+        autoComplete="new-password"
         label="Password"
         onChangeText={setPassword}
         onToggleSecureText={() => setPasswordVisible((current) => !current)}
+        returnKeyType="next"
         secureTextEntry={!passwordVisible}
         secureToggleIcon={passwordVisible ? "eye-off-outline" : "eye-outline"}
+        textContentType="newPassword"
         value={password}
       />
       <FormField
+        autoComplete="new-password"
         label="Confirm Password"
         onChangeText={setConfirmPassword}
+        onSubmitEditing={submit}
         onToggleSecureText={() => setConfirmPasswordVisible((current) => !current)}
+        returnKeyType="done"
         secureTextEntry={!confirmPasswordVisible}
         secureToggleIcon={confirmPasswordVisible ? "eye-off-outline" : "eye-outline"}
+        textContentType="newPassword"
         value={confirmPassword}
       />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -165,7 +189,7 @@ export function RegisterScreen() {
         style={[styles.primaryButton, loading && styles.disabledButton]}
       >
         {loading ? (
-          <ActivityIndicator color={colors.text} />
+          <ActivityIndicator color={colors.textOnPrimary} />
         ) : (
           <Text style={styles.primaryButtonText}>Create Account</Text>
         )}
@@ -193,33 +217,41 @@ function AuthShell({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboardView}
       >
-        <View style={styles.brandRow}>
-          <View style={styles.brandIcon}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          style={styles.scrollView}
+        >
+          <View style={styles.brandRow}>
+            <View style={styles.brandIcon}>
+              <Image
+                accessibilityIgnoresInvertColors
+                resizeMode="contain"
+                source={require("../../assets/images/logocolokin.png")}
+                style={styles.brandIconImage}
+              />
+            </View>
             <Image
               accessibilityIgnoresInvertColors
               resizeMode="contain"
-              source={require("../../assets/images/logocolokin.png")}
-              style={styles.brandIconImage}
+              source={require("../../assets/images/logocolokin_text_transparent.png")}
+              style={styles.brandTextImage}
             />
           </View>
-          <Image
-            accessibilityIgnoresInvertColors
-            resizeMode="contain"
-            source={require("../../assets/images/logocolokin_text_transparent.png")}
-            style={styles.brandTextImage}
-          />
-        </View>
-        <View style={styles.formCard}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.subtitle}>Access your wallet, rentals, and locker activity.</Text>
-          <View style={styles.form}>{children}</View>
-          <View style={styles.footerRow}>
-            <Text style={styles.footerText}>{footerText}</Text>
-            <Pressable accessibilityRole="button" onPress={footerAction}>
-              <Text style={styles.footerLink}>{footerLabel}</Text>
-            </Pressable>
+          <View style={styles.formCard}>
+            <Text style={styles.title}>{title}</Text>
+            <Text style={styles.subtitle}>Access your wallet, rentals, and locker activity.</Text>
+            <View style={styles.form}>{children}</View>
+            <View style={styles.footerRow}>
+              <Text style={styles.footerText}>{footerText}</Text>
+              <Pressable accessibilityRole="button" onPress={footerAction}>
+                <Text style={styles.footerLink}>{footerLabel}</Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -232,12 +264,17 @@ function FormField({
   ...inputProps
 }: {
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoComplete?: TextInputProps["autoComplete"];
+  autoCorrect?: boolean;
   keyboardType?: "default" | "email-address" | "phone-pad";
   label: string;
   onChangeText: (value: string) => void;
+  onSubmitEditing?: TextInputProps["onSubmitEditing"];
+  returnKeyType?: TextInputProps["returnKeyType"];
   onToggleSecureText?: () => void;
   secureTextEntry?: boolean;
   secureToggleIcon?: keyof typeof Ionicons.glyphMap;
+  textContentType?: TextInputProps["textContentType"];
   value: string;
 }) {
   return (
@@ -271,8 +308,15 @@ const styles = StyleSheet.create({
   },
   keyboardView: {
     flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: "center",
     padding: spacing.screen,
+    paddingBottom: 56,
   },
   brandRow: {
     alignItems: "center",
@@ -306,6 +350,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 16,
     padding: spacing.card,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.14,
+    shadowRadius: 26,
+    elevation: 4,
   },
   title: {
     color: colors.text,
@@ -367,7 +416,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   primaryButtonText: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 16,
     fontWeight: "800",
   },

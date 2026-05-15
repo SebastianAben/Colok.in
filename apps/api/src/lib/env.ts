@@ -8,7 +8,18 @@ const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),
   MQTT_URL: z.string().url().default("mqtt://localhost:1883"),
+  MQTT_USERNAME: z.string().optional(),
+  MQTT_PASSWORD: z.string().optional(),
+  MQTT_CLIENT_ID: z.string().optional(),
+  MQTT_KEEPALIVE_SECONDS: z.coerce.number().int().positive().default(60),
   IOT_MODE: z.enum(["mock", "mqtt"]).default("mock"),
+  IOT_LOCKER_ID: z.string().optional(),
+  PUSH_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  PUSH_PROVIDER: z.enum(["expo"]).default("expo"),
+  EXPO_ACCESS_TOKEN: z.string().optional(),
   FCM_ENABLED: z
     .enum(["true", "false"])
     .default("false")

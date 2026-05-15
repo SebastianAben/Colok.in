@@ -3,6 +3,7 @@ import type {
   ActiveRentalResponse,
   ConfirmReturnResponse,
   NotificationListItem,
+  RentalDetailResponse,
   ReturnDetailResponse,
   ReturnIntentResponse,
   TransactionListItem,
@@ -13,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  ImageBackground,
   Modal,
   Pressable,
   RefreshControl,
@@ -43,6 +45,7 @@ import {
   createRentalRequest,
   createReturnIntentRequest,
   getActiveRentalRequest,
+  getRentalRequest,
   getReturnSessionRequest,
   listTransactionsRequest,
   listNotificationsRequest,
@@ -131,6 +134,20 @@ function messageFrom(error: unknown) {
   return "Request failed. Please try again.";
 }
 
+function routeToRentSuccess(rental: RentalDetailResponse) {
+  router.replace({
+    pathname: "/rent/success",
+    params: {
+      compartmentNumber: String(rental.compartmentNumber),
+      dueAt: rental.dueAt,
+      lockerName: rental.locker.name,
+      rentFee: String(rental.rentFee),
+      rentalId: rental.id,
+      unlockRequestId: rental.unlockRequestId ?? "",
+    },
+  });
+}
+
 type TransactionHistoryItem = Omit<Partial<TransactionListItem>, "type"> & {
   amount?: number;
   completedAt?: string | null;
@@ -186,6 +203,9 @@ const feedbackCategories = [
   { label: "Support", value: "SUPPORT" },
   { label: "Other", value: "OTHER" },
 ] as const;
+
+const rentalUnlockPollIntervalMs = 2500;
+const rentalUnlockTimeoutMs = 60000;
 
 function labelFromTransactionType(type?: string | null) {
   switch (type) {
@@ -258,7 +278,7 @@ function transactionDirection(transaction: TransactionHistoryItem) {
 }
 
 export function HomeScreen() {
-  const { accessToken, me, refreshMe } = useAuth();
+  const { accessToken, me, refreshMe, withAuthenticatedRequest } = useAuth();
   const [activeRental, setActiveRental] = useState<ActiveRentalResponse>(null);
   const [activeRentalError, setActiveRentalError] = useState<string | null>(null);
   const [activeRentalLoading, setActiveRentalLoading] = useState(false);
@@ -297,7 +317,7 @@ export function HomeScreen() {
       setActiveRentalError(null);
 
       try {
-        const rental = await getActiveRentalRequest(accessToken);
+        const rental = await withAuthenticatedRequest((token) => getActiveRentalRequest(token));
         setActiveRental(rental);
         setTimerNowMs(Date.now());
         setTimerSkipOffsetMs(0);
@@ -311,7 +331,7 @@ export function HomeScreen() {
         }
       }
     },
-    [accessToken],
+    [accessToken, withAuthenticatedRequest],
   );
 
   useEffect(() => {
@@ -403,7 +423,7 @@ export function HomeScreen() {
             <Ionicons
               name={balanceVisible ? "eye-outline" : "eye-off-outline"}
               size={22}
-              color={colors.text}
+              color={colors.textOnPrimary}
             />
           </Pressable>
         </View>
@@ -500,12 +520,19 @@ export function HomeScreen() {
         <Text style={screenStyles.errorText}>{activeRentalError}</Text>
       ) : null}
 
-      <View style={screenStyles.promo}>
+      <ImageBackground
+        accessibilityIgnoresInvertColors
+        imageStyle={screenStyles.promoImage}
+        resizeMode="cover"
+        source={{ uri: "https://picsum.photos/seed/colokin-campus-power/900/420" }}
+        style={screenStyles.promo}
+      >
+        <View style={screenStyles.promoOverlay} />
         <View style={screenStyles.promoBadge}>
           <Text style={screenStyles.promoBadgeText}>PROMO</Text>
         </View>
         <Text style={screenStyles.promoTitle}>Stay powered up at your favorite campus spot.</Text>
-      </View>
+      </ImageBackground>
 
       <Card>
         <View style={screenStyles.locationCardHeader}>
@@ -574,7 +601,7 @@ export function ScanScreen() {
         <View style={screenStyles.scanLine} />
       </View>
       <Pressable style={screenStyles.flashButton}>
-        <Ionicons name="flashlight-outline" size={24} color={colors.text} />
+        <Ionicons name="flashlight-outline" size={24} color={colors.textOnPrimary} />
       </Pressable>
       <Text style={screenStyles.flashLabel}>Flashlight</Text>
       <View style={screenStyles.manualCodeBox}>
@@ -595,7 +622,7 @@ export function ScanScreen() {
 }
 
 export function TransactionsScreen() {
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -614,7 +641,7 @@ export function TransactionsScreen() {
       setError(null);
 
       try {
-        setTransactions(await listTransactionsRequest(accessToken));
+        setTransactions(await withAuthenticatedRequest((token) => listTransactionsRequest(token)));
       } catch (loadError) {
         setError(messageFrom(loadError));
       } finally {
@@ -623,7 +650,7 @@ export function TransactionsScreen() {
         }
       }
     },
-    [accessToken],
+    [accessToken, withAuthenticatedRequest],
   );
 
   useEffect(() => {
@@ -751,7 +778,7 @@ export function TransactionsScreen() {
 }
 
 export function NotificationsScreen() {
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [notifications, setNotifications] = useState<NotificationListItem[]>([]);
@@ -770,7 +797,9 @@ export function NotificationsScreen() {
       setError(null);
 
       try {
-        setNotifications(await listNotificationsRequest(accessToken));
+        setNotifications(
+          await withAuthenticatedRequest((token) => listNotificationsRequest(token)),
+        );
       } catch (loadError) {
         setError(messageFrom(loadError));
       } finally {
@@ -779,12 +808,34 @@ export function NotificationsScreen() {
         }
       }
     },
-    [accessToken],
+    [accessToken, withAuthenticatedRequest],
   );
 
   useEffect(() => {
     void loadNotifications();
   }, [loadNotifications]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      return undefined;
+    }
+
+    const interval = setInterval(() => {
+      if (AppState.currentState === "active") {
+        void loadNotifications({ showLoading: false });
+      }
+    }, 45000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void loadNotifications({ showLoading: false });
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, [accessToken, loadNotifications]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -816,7 +867,9 @@ export function NotificationsScreen() {
         );
 
         try {
-          await markNotificationReadRequest(accessToken, notification.id);
+          await withAuthenticatedRequest((token) =>
+            markNotificationReadRequest(token, notification.id),
+          );
         } catch {
           await loadNotifications({ showLoading: false });
         }
@@ -826,7 +879,7 @@ export function NotificationsScreen() {
         router.push("/transactions");
       }
     },
-    [accessToken, loadNotifications],
+    [accessToken, loadNotifications, withAuthenticatedRequest],
   );
 
   return (
@@ -940,7 +993,7 @@ export function SettingsScreen() {
         onPress={() => setConfirmingLogout(true)}
         style={screenStyles.logoutButton}
       >
-        <Ionicons name="log-out-outline" size={18} color={colors.text} />
+        <Ionicons name="log-out-outline" size={18} color={colors.textOnPrimary} />
         <Text style={screenStyles.logoutButtonText}>Log Out</Text>
       </Pressable>
       <Modal
@@ -1061,7 +1114,7 @@ export function TermsPoliciesScreen() {
 }
 
 export function FeedbackScreen() {
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const [category, setCategory] = useState<(typeof feedbackCategories)[number]["value"]>("SUPPORT");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -1085,11 +1138,13 @@ export function FeedbackScreen() {
 
     setSubmitting(true);
     try {
-      const response = await createFeedbackRequest(accessToken, {
-        category,
-        subject,
-        message,
-      });
+      const response = await withAuthenticatedRequest((token) =>
+        createFeedbackRequest(token, {
+          category,
+          subject,
+          message,
+        }),
+      );
       setSubject("");
       setMessage("");
       setSuccess(`Feedback submitted. Ticket ${response.id.slice(-6).toUpperCase()} is open.`);
@@ -1234,7 +1289,7 @@ export function RentDurationScreen() {
     lockerId?: string;
     lockerName?: string;
   }>();
-  const { accessToken } = useAuth();
+  const { accessToken, withAuthenticatedRequest } = useAuth();
   const availableCableCount = params.availableCableCount ?? "3";
   const lockerId = params.lockerId ?? "lck_labtek_v_itb";
   const lockerName = params.lockerName ?? demoLocker.name;
@@ -1256,10 +1311,12 @@ export function RentDurationScreen() {
     setError(null);
 
     try {
-      const quote = await createRentalQuoteRequest(accessToken, {
-        durationMinutes,
-        lockerId,
-      });
+      const quote = await withAuthenticatedRequest((token) =>
+        createRentalQuoteRequest(token, {
+          durationMinutes,
+          lockerId,
+        }),
+      );
 
       router.push({
         pathname: "/rent/review",
@@ -1327,7 +1384,7 @@ export function RentReviewScreen() {
     rentFee?: string;
     totalCharge?: string;
   }>();
-  const { accessToken, me, refreshMe } = useAuth();
+  const { accessToken, me, refreshMe, withAuthenticatedRequest } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const durationMinutes = Number(params.durationMinutes ?? 120);
@@ -1347,24 +1404,36 @@ export function RentReviewScreen() {
     setError(null);
 
     try {
-      const rental = await createRentalRequest(accessToken, {
-        lockerId,
-        compartmentId: params.compartmentId || undefined,
-        durationMinutes,
-        paymentSource: "WALLET",
-      });
+      const rental = await withAuthenticatedRequest((token) =>
+        createRentalRequest(token, {
+          lockerId,
+          compartmentId: params.compartmentId || undefined,
+          durationMinutes,
+          paymentSource: "WALLET",
+        }),
+      );
       await refreshMe();
-      router.replace({
-        pathname: "/rent/success",
-        params: {
-          compartmentNumber: String(rental.compartmentNumber),
-          dueAt: rental.dueAt,
-          lockerName: rental.locker.name,
-          rentFee: String(rental.rentFee),
-          rentalId: rental.id,
-          unlockRequestId: rental.unlockRequestId ?? "",
-        },
-      });
+
+      if (rental.status === "UNLOCKING") {
+        router.replace({
+          pathname: "/rent/pending",
+          params: {
+            compartmentNumber: String(rental.compartmentNumber),
+            dueAt: rental.dueAt,
+            lockerName: rental.locker.name,
+            rentFee: String(rental.rentFee),
+            rentalId: rental.id,
+          },
+        });
+        return;
+      }
+
+      if (rental.status === "ACTIVE") {
+        routeToRentSuccess(rental);
+        return;
+      }
+
+      setError(`Rental is ${rental.status.toLowerCase().replaceAll("_", " ")}. Please try again.`);
     } catch (createError) {
       if (createError instanceof ApiClientError) {
         if (createError.code === "INSUFFICIENT_BALANCE") {
@@ -1410,6 +1479,219 @@ export function RentReviewScreen() {
   );
 }
 
+export function RentPendingScreen() {
+  const params = useLocalSearchParams<{
+    compartmentNumber?: string;
+    dueAt?: string;
+    lockerName?: string;
+    rentFee?: string;
+    rentalId?: string;
+  }>();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
+  const rentalId = params.rentalId ?? "";
+  const [checking, setChecking] = useState(true);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [statusLabel, setStatusLabel] = useState("Unlocking locker");
+  const [timedOut, setTimedOut] = useState(false);
+  const progress = Math.min(1, elapsedMs / rentalUnlockTimeoutMs);
+  const remainingSeconds = Math.max(0, Math.ceil((rentalUnlockTimeoutMs - elapsedMs) / 1000));
+  const dueAt = params.dueAt ? new Date(params.dueAt).toLocaleString("id-ID") : "-";
+
+  useEffect(() => {
+    if (!accessToken || !rentalId) {
+      setChecking(false);
+      setError("Rental detail is incomplete. Please scan the locker QR again.");
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
+
+    async function pollRental() {
+      const nextElapsedMs = Date.now() - startedAt;
+      let shouldPollAgain = true;
+
+      if (cancelled) {
+        return;
+      }
+
+      setElapsedMs(nextElapsedMs);
+
+      if (nextElapsedMs >= rentalUnlockTimeoutMs) {
+        shouldPollAgain = false;
+        setChecking(false);
+        setStatusLabel("Checking final unlock status");
+
+        try {
+          const rental = await withAuthenticatedRequest((token) =>
+            getRentalRequest(token, rentalId),
+          );
+
+          if (cancelled) {
+            return;
+          }
+
+          if (rental.status === "ACTIVE") {
+            await refreshMe();
+
+            if (!cancelled) {
+              routeToRentSuccess(rental);
+            }
+            return;
+          }
+
+          if (rental.status === "FAILED" || rental.status === "CANCELLED") {
+            await refreshMe();
+
+            if (cancelled) {
+              return;
+            }
+
+            setTimedOut(false);
+            setStatusLabel("Unlock failed");
+            setError(
+              "The locker did not confirm cable pickup in time. Your rental was not started.",
+            );
+            return;
+          }
+        } catch (pollError) {
+          if (!cancelled) {
+            setError(messageFrom(pollError));
+          }
+        }
+
+        setTimedOut(true);
+        setStatusLabel("Unlock timed out");
+        return;
+      }
+
+      setChecking(true);
+
+      try {
+        const rental = await withAuthenticatedRequest((token) => getRentalRequest(token, rentalId));
+
+        if (cancelled) {
+          return;
+        }
+
+        setError(null);
+
+        if (rental.status === "ACTIVE") {
+          shouldPollAgain = false;
+          await refreshMe();
+
+          if (!cancelled) {
+            routeToRentSuccess(rental);
+          }
+          return;
+        }
+
+        if (rental.status === "FAILED" || rental.status === "CANCELLED") {
+          shouldPollAgain = false;
+          setChecking(false);
+          setStatusLabel("Unlock failed");
+          setError(
+            "The locker could not be unlocked. Please try another locker or contact support.",
+          );
+          return;
+        }
+
+        setStatusLabel(
+          rental.status === "UNLOCKING"
+            ? "Unlocking locker"
+            : rental.status.toLowerCase().replaceAll("_", " "),
+        );
+      } catch (pollError) {
+        if (!cancelled) {
+          setError(messageFrom(pollError));
+        }
+      } finally {
+        if (!cancelled && shouldPollAgain) {
+          setChecking(false);
+          timeoutId = setTimeout(pollRental, rentalUnlockPollIntervalMs);
+        }
+      }
+    }
+
+    setElapsedMs(0);
+    setError(null);
+    setTimedOut(false);
+    setStatusLabel("Unlocking locker");
+    void pollRental();
+
+    return () => {
+      cancelled = true;
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [accessToken, refreshMe, rentalId, retryNonce, withAuthenticatedRequest]);
+
+  function handleRetry() {
+    setRetryNonce((current) => current + 1);
+  }
+
+  return (
+    <ScreenShell
+      activeTab="Home"
+      title="Preparing Rental"
+      subtitle="Keep this screen open while the locker unlocks."
+    >
+      <Card style={screenStyles.pendingCard}>
+        <View style={screenStyles.pendingIconWrap}>
+          {checking && !timedOut ? (
+            <ActivityIndicator color={colors.accent} size="large" />
+          ) : (
+            <Ionicons
+              color={timedOut || error ? colors.warning : colors.accent}
+              name={timedOut || error ? "alert-circle-outline" : "lock-open-outline"}
+              size={34}
+            />
+          )}
+        </View>
+        <View style={screenStyles.pendingCopy}>
+          <Text style={screenStyles.pendingTitle}>{statusLabel}</Text>
+          <Text style={screenStyles.cardBody}>
+            {timedOut
+              ? "The locker did not confirm cable pickup in time. Retry the status check before scanning another locker."
+              : "We are confirming the compartment sensor and will continue automatically once the rental is active."}
+          </Text>
+        </View>
+        <View style={screenStyles.pendingProgressTrack}>
+          <View style={[screenStyles.pendingProgressFill, { width: `${progress * 100}%` }]} />
+        </View>
+        <Text style={screenStyles.metaText}>
+          {timedOut ? "Status check paused" : `Timeout in ${remainingSeconds}s`}
+        </Text>
+      </Card>
+
+      <Card style={screenStyles.pendingDetailCard}>
+        <DetailRow label="Location" value={params.lockerName ?? demoLocker.name} />
+        <DetailRow
+          label="Locker"
+          value={(params.compartmentNumber ?? demoLocker.compartment).toString()}
+        />
+        <DetailRow label="Rent Fee" value={formatRupiah(Number(params.rentFee ?? 50000))} />
+        <DetailRow label="Due At" value={dueAt} />
+      </Card>
+
+      {error ? (
+        <View style={screenStyles.reviewErrorBox}>
+          <Text style={screenStyles.errorText}>{error}</Text>
+          <View style={screenStyles.pendingActions}>
+            <SecondaryButton label="Retry Status" onPress={handleRetry} />
+            <SecondaryButton label="Back Home" onPress={() => router.replace("/")} />
+          </View>
+        </View>
+      ) : null}
+    </ScreenShell>
+  );
+}
+
 export function RentSuccessScreen() {
   const params = useLocalSearchParams<{
     compartmentNumber?: string;
@@ -1443,7 +1725,7 @@ export function RentSuccessScreen() {
 }
 
 export function ReturnReviewScreen() {
-  const { accessToken, refreshMe } = useAuth();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
   const [activeRental, setActiveRental] = useState<NonNullable<ActiveRentalResponse> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [finePaid, setFinePaid] = useState(false);
@@ -1463,7 +1745,7 @@ export function ReturnReviewScreen() {
     setShowTopUp(false);
 
     try {
-      const rental = await getActiveRentalRequest(accessToken);
+      const rental = await withAuthenticatedRequest((token) => getActiveRentalRequest(token));
 
       if (!rental) {
         setActiveRental(null);
@@ -1472,9 +1754,11 @@ export function ReturnReviewScreen() {
         return;
       }
 
-      const nextIntent = await createReturnIntentRequest(accessToken, rental.id, {
-        lockerId: rental.locker.id,
-      });
+      const nextIntent = await withAuthenticatedRequest((token) =>
+        createReturnIntentRequest(token, rental.id, {
+          lockerId: rental.locker.id,
+        }),
+      );
       const intentWithFineState = nextIntent as ReturnIntentResponse &
         Partial<{ finePaid: boolean; finePaidAt: string | null }>;
 
@@ -1486,7 +1770,7 @@ export function ReturnReviewScreen() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, withAuthenticatedRequest]);
 
   useEffect(() => {
     void loadReturnIntent();
@@ -1507,13 +1791,15 @@ export function ReturnReviewScreen() {
 
     try {
       if (fine > 0 && !finePaid) {
-        await payReturnFineRequest(accessToken, returnSessionId);
+        await withAuthenticatedRequest((token) => payReturnFineRequest(token, returnSessionId));
         await refreshMe();
         setFinePaid(true);
         return;
       }
 
-      const confirmation = await confirmReturnRequest(accessToken, returnSessionId);
+      const confirmation = await withAuthenticatedRequest((token) =>
+        confirmReturnRequest(token, returnSessionId),
+      );
       router.replace({
         pathname: "/return/instruction",
         params: {
@@ -1597,7 +1883,7 @@ export function ReturnInstructionScreen() {
     returnSessionId?: string;
     sensorTimeoutAt?: string;
   }>();
-  const { accessToken, refreshMe } = useAuth();
+  const { accessToken, refreshMe, withAuthenticatedRequest } = useAuth();
   const [confirmation, setConfirmation] = useState<ConfirmReturnResponse | null>(null);
   const [detail, setDetail] = useState<ReturnDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1621,16 +1907,20 @@ export function ReturnInstructionScreen() {
 
     try {
       if (params.confirmed !== "1") {
-        setConfirmation(await confirmReturnRequest(accessToken, returnSessionId));
+        setConfirmation(
+          await withAuthenticatedRequest((token) => confirmReturnRequest(token, returnSessionId)),
+        );
       }
 
-      const firstDetail = await getReturnSessionRequest(accessToken, returnSessionId);
+      const firstDetail = await withAuthenticatedRequest((token) =>
+        getReturnSessionRequest(token, returnSessionId),
+      );
       setDetail(firstDetail);
     } catch (startError) {
       setError(messageFrom(startError));
       setPolling(false);
     }
-  }, [accessToken, params.confirmed, returnSessionId]);
+  }, [accessToken, params.confirmed, returnSessionId, withAuthenticatedRequest]);
 
   useEffect(() => {
     void startReturnConfirmation();
@@ -1641,13 +1931,14 @@ export function ReturnInstructionScreen() {
       return undefined;
     }
 
-    const token = accessToken;
     let cancelled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
     async function poll() {
       try {
-        const nextDetail = await getReturnSessionRequest(token, returnSessionId);
+        const nextDetail = await withAuthenticatedRequest((token) =>
+          getReturnSessionRequest(token, returnSessionId),
+        );
 
         if (cancelled) {
           return;
@@ -1696,7 +1987,7 @@ export function ReturnInstructionScreen() {
         clearTimeout(timeout);
       }
     };
-  }, [accessToken, lockerName, polling, refreshMe, returnSessionId]);
+  }, [accessToken, lockerName, polling, refreshMe, returnSessionId, withAuthenticatedRequest]);
 
   return (
     <ScreenShell activeTab="Home" title="Return Cable">
@@ -1863,7 +2154,7 @@ function MapLockerMarker({ top, left, muted }: { top: number; left: number; mute
         },
       ]}
     >
-      <Ionicons name="flash" size={18} color={colors.text} />
+      <Ionicons name="flash" size={18} color={colors.textOnPrimary} />
     </View>
   );
 }
@@ -1903,7 +2194,7 @@ const screenStyles = StyleSheet.create({
     color: colors.primary,
   },
   amountDebit: {
-    color: colors.accent,
+    color: colors.danger,
   },
   activeCard: {
     borderLeftColor: colors.accent,
@@ -1914,9 +2205,9 @@ const screenStyles = StyleSheet.create({
     gap: 16,
   },
   balanceAmount: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 30,
-    fontWeight: "800",
+    fontWeight: "900",
   },
   balanceCard: {
     backgroundColor: colors.primaryDark,
@@ -1927,9 +2218,9 @@ const screenStyles = StyleSheet.create({
     padding: spacing.card,
   },
   balanceLabel: {
-    color: colors.textSecondary,
+    color: "rgba(255,255,255,0.78)",
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   balanceTop: {
     alignItems: "flex-start",
@@ -1951,7 +2242,7 @@ const screenStyles = StyleSheet.create({
     fontWeight: "800",
   },
   warningText: {
-    color: colors.accent,
+    color: colors.warning,
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 18,
@@ -2013,8 +2304,8 @@ const screenStyles = StyleSheet.create({
   },
   flashButton: {
     alignItems: "center",
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.borderStrong,
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryDark,
     borderWidth: 1,
     borderRadius: radii.pill,
     height: 58,
@@ -2022,7 +2313,7 @@ const screenStyles = StyleSheet.create({
     width: 58,
   },
   flashLabel: {
-    color: colors.text,
+    color: colors.textStrong,
     fontSize: 13,
     fontWeight: "700",
   },
@@ -2060,7 +2351,7 @@ const screenStyles = StyleSheet.create({
   },
   iconCircle: {
     alignItems: "center",
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: colors.iconCircle,
     borderRadius: radii.pill,
     height: 42,
     justifyContent: "center",
@@ -2141,7 +2432,7 @@ const screenStyles = StyleSheet.create({
   },
   marker: {
     alignItems: "center",
-    borderColor: colors.background,
+    borderColor: colors.surface,
     borderRadius: radii.pill,
     borderWidth: 4,
     height: 48,
@@ -2226,7 +2517,7 @@ const screenStyles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   logoutButtonText: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 15,
     fontWeight: "900",
   },
@@ -2265,7 +2556,7 @@ const screenStyles = StyleSheet.create({
     fontWeight: "800",
   },
   segmentTextActive: {
-    color: colors.text,
+    color: colors.textOnPrimary,
   },
   settingToggleCard: {
     alignItems: "center",
@@ -2311,7 +2602,7 @@ const screenStyles = StyleSheet.create({
     width: 58,
   },
   profileAvatarText: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 22,
     fontWeight: "900",
   },
@@ -2320,14 +2611,72 @@ const screenStyles = StyleSheet.create({
     flexDirection: "row",
     gap: 16,
   },
+  pendingActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  pendingCard: {
+    alignItems: "center",
+    gap: 18,
+  },
+  pendingCopy: {
+    alignItems: "center",
+    gap: 8,
+  },
+  pendingDetailCard: {
+    gap: 2,
+  },
+  pendingIconWrap: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    height: 82,
+    justifyContent: "center",
+    width: 82,
+  },
+  pendingProgressFill: {
+    backgroundColor: colors.accent,
+    borderRadius: radii.pill,
+    height: "100%",
+  },
+  pendingProgressTrack: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    height: 12,
+    overflow: "hidden",
+    width: "100%",
+  },
+  pendingTitle: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "900",
+    lineHeight: 28,
+    textAlign: "center",
+  },
   promo: {
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.borderStrong,
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 18,
     minHeight: 148,
     overflow: "hidden",
     padding: spacing.card,
+  },
+  promoImage: {
+    opacity: 0.9,
+  },
+  promoOverlay: {
+    backgroundColor: "rgba(5, 17, 38, 0.52)",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
   },
   promoBadge: {
     alignSelf: "flex-start",
@@ -2342,7 +2691,7 @@ const screenStyles = StyleSheet.create({
     fontWeight: "900",
   },
   promoTitle: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 24,
     fontWeight: "900",
     lineHeight: 30,
@@ -2370,14 +2719,14 @@ const screenStyles = StyleSheet.create({
     position: "absolute",
   },
   scannerBrand: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 22,
     fontWeight: "900",
     position: "absolute",
     top: 64,
   },
   scannerInstruction: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 18,
     fontWeight: "800",
     lineHeight: 24,
@@ -2497,6 +2846,7 @@ const screenStyles = StyleSheet.create({
   },
   unreadCard: {
     borderColor: colors.primary,
+    backgroundColor: colors.surfaceBlue,
   },
   unreadDot: {
     backgroundColor: colors.primary,

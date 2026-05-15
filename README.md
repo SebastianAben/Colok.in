@@ -58,9 +58,41 @@ pnpm dev:mobile
 ## API URLs
 
 - Local API: `http://127.0.0.1:4000/v1`
-- Planned tunnel API: `https://api-colokin.albern.space/v1`
+- Shared testing API: `https://api-dev-colokin.albern.space/v1`
+- Production API: `https://api-colokin.albern.space/v1`
+- LAN API, only when intentionally testing against a local API laptop: `http://<api-laptop-lan-ip>:4000/v1`
 
 Mobile uses `EXPO_PUBLIC_API_URL`; see `apps/mobile/.env.local.example` and `apps/mobile/.env.server.example`.
+
+For shared testing from another laptop or phone, point the mobile app at the dev home-server API:
+
+```env
+EXPO_PUBLIC_API_URL=https://api-dev-colokin.albern.space/v1
+```
+
+Restart Expo after changing `EXPO_PUBLIC_API_URL`. If the app still cannot connect, open
+`https://api-dev-colokin.albern.space/v1/health` in the tester's browser to confirm the public
+backend is reachable from their network.
+
+Only use a LAN IP when you intentionally run the API from a local laptop instead of the home server.
+In that mode, do not use `localhost` or `127.0.0.1` in the mobile app environment. Those addresses
+point to the device running the app, not the laptop running the API. Use the API laptop's Wi-Fi/LAN
+IP instead:
+
+```bash
+# macOS: find the API laptop's Wi-Fi IP
+ipconfig getifaddr en0
+```
+
+Then set `apps/mobile/.env.local`:
+
+```env
+EXPO_PUBLIC_API_URL=http://<api-laptop-lan-ip>:4000/v1
+```
+
+The API already listens on `0.0.0.0`, so if `http://<api-laptop-lan-ip>:4000/v1/health` is
+unreachable from the other laptop, check that both devices are on the same network and that the API
+laptop firewall allows incoming connections to port `4000`.
 
 ## Deployment
 

@@ -82,24 +82,43 @@ export async function sendPushToUser(
     data?: Record<string, string>;
   },
 ) {
-  const tokens = await prisma.deviceToken.findMany({
-    where: {
-      userId,
-      revokedAt: null,
-    },
-    select: {
-      token: true,
-    },
-  });
+  try {
+    const tokens = await prisma.deviceToken.findMany({
+      where: {
+        userId,
+        revokedAt: null,
+      },
+      select: {
+        id: true,
+        token: true,
+      },
+    });
 
-  await Promise.allSettled(
-    tokens.map((deviceToken) =>
-      sendPushNotification({
-        token: deviceToken.token,
-        title: input.title,
-        body: input.body,
-        data: input.data,
+    await Promise.allSettled(
+      tokens.map(async (deviceToken) => {
+        const result = await sendPushNotification({
+          token: deviceToken.token,
+          title: input.title,
+          body: input.body,
+          data: input.data,
+        });
+
+        if (
+          result.status === "invalid_token" ||
+          (result.status === "failed" && result.errorCode === "DeviceNotRegistered")
+        ) {
+          await prisma.deviceToken.update({
+            where: {
+              id: deviceToken.id,
+            },
+            data: {
+              revokedAt: new Date(),
+            },
+          });
+        }
       }),
-    ),
-  );
+    );
+  } catch {
+    // Push delivery is best effort; persisted in-app notifications remain canonical.
+  }
 }

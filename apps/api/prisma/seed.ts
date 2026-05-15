@@ -6,6 +6,7 @@ const prisma = new PrismaClient();
 const demoUserId = "usr_demo_001";
 const demoWalletId = "wal_demo_001";
 const demoLockerId = "lck_labtek_v_itb";
+const libraryLockerId = "lck_perpustakaan_pusat_itb";
 
 async function main() {
   const user = await prisma.user.upsert({
@@ -85,7 +86,26 @@ async function main() {
     },
   });
 
-  for (let number = 1; number <= 8; number += 1) {
+  const staleLabtekNumbers = Array.from({ length: 6 }, (_, index) => index + 3);
+  await prisma.cableUnit.deleteMany({
+    where: {
+      id: {
+        in: staleLabtekNumbers.map(
+          (number) => `cbl_labtek_v_${number.toString().padStart(3, "0")}`,
+        ),
+      },
+    },
+  });
+  await prisma.compartment.deleteMany({
+    where: {
+      lockerId: locker.id,
+      number: {
+        in: staleLabtekNumbers,
+      },
+    },
+  });
+
+  for (let number = 1; number <= 2; number += 1) {
     await prisma.compartment.upsert({
       where: {
         lockerId_number: {
@@ -94,20 +114,20 @@ async function main() {
         },
       },
       update: {
-        status: number <= 3 ? "AVAILABLE" : "EMPTY",
-        lastSensorState: number <= 3 ? "CABLE_PRESENT" : "CABLE_ABSENT",
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
       },
       create: {
         id: `cmp_labtek_v_${number.toString().padStart(3, "0")}`,
         lockerId: locker.id,
         number,
-        status: number <= 3 ? "AVAILABLE" : "EMPTY",
-        lastSensorState: number <= 3 ? "CABLE_PRESENT" : "CABLE_ABSENT",
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
       },
     });
   }
 
-  for (let number = 1; number <= 3; number += 1) {
+  for (let number = 1; number <= 2; number += 1) {
     const compartmentId = `cmp_labtek_v_${number.toString().padStart(3, "0")}`;
     const cableUnit = await prisma.cableUnit.upsert({
       where: { serialNumber: `COL-ITB-${number.toString().padStart(3, "0")}` },
@@ -127,6 +147,81 @@ async function main() {
         isSniCertified: true,
         hasOverloadProtection: true,
         currentLockerId: locker.id,
+        currentCompartmentId: compartmentId,
+      },
+    });
+
+    await prisma.compartment.update({
+      where: { id: compartmentId },
+      data: {
+        currentCableUnitId: cableUnit.id,
+      },
+    });
+  }
+
+  const libraryLocker = await prisma.locker.upsert({
+    where: { id: libraryLockerId },
+    update: {
+      name: "Perpustakaan Pusat ITB",
+      address: "Kampus ITB Ganesha, Bandung",
+      lat: -6.887839742717819,
+      lng: 107.61077991147646,
+      status: "ONLINE",
+      operationalHours: "24/7",
+      lastHeartbeatAt: new Date(),
+    },
+    create: {
+      id: libraryLockerId,
+      name: "Perpustakaan Pusat ITB",
+      address: "Kampus ITB Ganesha, Bandung",
+      lat: -6.887839742717819,
+      lng: 107.61077991147646,
+      status: "ONLINE",
+      operationalHours: "24/7",
+      lastHeartbeatAt: new Date(),
+    },
+  });
+
+  for (let number = 1; number <= 4; number += 1) {
+    const compartmentId = `cmp_perpus_pusat_${number.toString().padStart(3, "0")}`;
+    await prisma.compartment.upsert({
+      where: {
+        lockerId_number: {
+          lockerId: libraryLocker.id,
+          number,
+        },
+      },
+      update: {
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
+      },
+      create: {
+        id: compartmentId,
+        lockerId: libraryLocker.id,
+        number,
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
+      },
+    });
+
+    const cableUnit = await prisma.cableUnit.upsert({
+      where: { serialNumber: `COL-PERPUS-${number.toString().padStart(3, "0")}` },
+      update: {
+        status: "AVAILABLE",
+        specification: "Extension cable 4 outlet, 3 meter, 2500W",
+        isSniCertified: true,
+        hasOverloadProtection: true,
+        currentLockerId: libraryLocker.id,
+        currentCompartmentId: compartmentId,
+      },
+      create: {
+        id: `cbl_perpus_pusat_${number.toString().padStart(3, "0")}`,
+        serialNumber: `COL-PERPUS-${number.toString().padStart(3, "0")}`,
+        status: "AVAILABLE",
+        specification: "Extension cable 4 outlet, 3 meter, 2500W",
+        isSniCertified: true,
+        hasOverloadProtection: true,
+        currentLockerId: libraryLocker.id,
         currentCompartmentId: compartmentId,
       },
     });
@@ -181,6 +276,9 @@ async function main() {
   await prisma.rental.upsert({
     where: { id: "rent_demo_returned_001" },
     update: {
+      lockerId: locker.id,
+      compartmentId: "cmp_labtek_v_002",
+      cableUnitId: "cbl_labtek_v_002",
       durationMinutes: 60,
       fine: 0,
       rentFee: 25000,
@@ -192,8 +290,8 @@ async function main() {
       id: "rent_demo_returned_001",
       userId: user.id,
       lockerId: locker.id,
-      compartmentId: "cmp_labtek_v_003",
-      cableUnitId: "cbl_labtek_v_003",
+      compartmentId: "cmp_labtek_v_002",
+      cableUnitId: "cbl_labtek_v_002",
       status: "RETURNED",
       durationMinutes: 60,
       startedAt: new Date("2026-05-01T06:00:00.000Z"),

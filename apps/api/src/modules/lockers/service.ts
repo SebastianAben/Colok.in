@@ -1,6 +1,7 @@
 import type { LockerDetailResponse, LockerListItem } from "@colokin/shared";
 import { type Locker, type Prisma } from "@prisma/client";
 import { lockerNotFoundError } from "../../lib/api-error.js";
+import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
 
 type LockerWithAvailability = Prisma.LockerGetPayload<{
@@ -16,6 +17,7 @@ function toNumber(value: Prisma.Decimal): number {
 function availableCompartments(locker: LockerWithAvailability) {
   return locker.compartments.filter(
     (compartment) =>
+      (env.IOT_MODE === "mock" || [1, 2].includes(compartment.number)) &&
       compartment.status === "AVAILABLE" &&
       compartment.lastSensorState === "CABLE_PRESENT" &&
       compartment.currentCableUnitId,

@@ -13,6 +13,7 @@ import {
   validationError,
 } from "../../../lib/api-error.js";
 import { prisma } from "../../../lib/prisma.js";
+import { sendPushToUser } from "../../notifications/service.js";
 
 const topUpExpiryMinutes = 15;
 
@@ -148,7 +149,7 @@ export async function confirmTopUp(
     throw topUpExpiredError();
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const topUp = await tx.topUp.findFirst({
       where: {
         id: topUpId,
@@ -220,7 +221,7 @@ export async function confirmTopUp(
 
     return {
       id: confirmedTopUp.id,
-      status: "SUCCESS",
+      status: "SUCCESS" as const,
       amount: confirmedTopUp.amount,
       wallet: {
         balance: wallet.balance,
@@ -232,6 +233,19 @@ export async function confirmTopUp(
       confirmedAt: iso(confirmedAt),
     };
   });
+
+  await sendPushToUser(userId, {
+    title: "Top Up Success",
+    body: `${formatRupiah(result.amount)} has been added to your Colok.in wallet.`,
+    data: {
+      notificationId: result.notificationId,
+      relatedTransactionId: result.walletTransactionId,
+      routeHint: "transactions",
+      type: "TOP_UP_SUCCESS",
+    },
+  });
+
+  return result;
 }
 
 async function creditWallet(

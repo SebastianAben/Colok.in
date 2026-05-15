@@ -19,8 +19,10 @@ import {
   validationError,
   walletChargeFailedError,
 } from "../../lib/api-error.js";
+import { env } from "../../lib/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { unlockCompartment } from "../iot/adapter.js";
+import { sendPushToUser } from "../notifications/service.js";
 
 const activeRentalStatuses: RentalStatus[] = [
   "UNLOCKING",
@@ -35,6 +37,7 @@ const graceToleranceMinutes = 15;
 const minimumDurationMinutes = 30;
 const maximumDurationMinutes = 360;
 const durationStepMinutes = 30;
+export const rentalUnlockTimeoutMs = 60_000;
 
 type Tx = Prisma.TransactionClient;
 
@@ -115,6 +118,7 @@ function availableCompartments(locker: LockerForRental) {
     .filter((compartment) => {
       const cableUnit = availableCableUnitByCompartmentId.get(compartment.id);
       return (
+        (env.IOT_MODE === "mock" || [1, 2].includes(compartment.number)) &&
         compartment.status === "AVAILABLE" &&
         compartment.lastSensorState === "CABLE_PRESENT" &&
         compartment.currentCableUnitId &&
@@ -192,6 +196,8 @@ async function findLockerForRental(tx: Tx, lockerId: string) {
 }
 
 async function assertNoActiveRental(tx: Tx, userId: string) {
+  await cleanupExpiredUnlockingRentals(userId, tx);
+
   const activeRental = await tx.rental.findFirst({
     where: {
       userId,
@@ -206,6 +212,172 @@ async function assertNoActiveRental(tx: Tx, userId: string) {
 
   if (activeRental) {
     throw userHasActiveRentalError();
+  }
+}
+
+export async function expireUnlockingRental(tx: Tx, rentalId: string) {
+  const rental = await tx.rental.findUnique({
+    where: { id: rentalId },
+  });
+
+  if (
+    !rental ||
+    rental.status !== "UNLOCKING" ||
+    Date.now() - rental.createdAt.getTime() < rentalUnlockTimeoutMs
+  ) {
+    return null;
+  }
+
+  const compartment = await tx.compartment.findUnique({
+    where: { id: rental.compartmentId },
+    select: { lastSensorState: true, status: true },
+  });
+
+  if (compartment?.lastSensorState === "CABLE_ABSENT" && compartment.status === "EMPTY") {
+    await activateUnlockedRental(tx, rental.id);
+    return rental.id;
+  }
+
+  await failUnlockingRental(tx, rental.id);
+
+  return rental.id;
+}
+
+async function failUnlockingRental(tx: Tx, rentalId: string) {
+  const rental = await tx.rental.findUnique({
+    where: { id: rentalId },
+  });
+
+  if (!rental) {
+    return null;
+  }
+
+  await tx.rental.update({
+    where: { id: rental.id },
+    data: { status: "FAILED" },
+  });
+
+  await tx.compartment.update({
+    where: { id: rental.compartmentId },
+    data: {
+      currentCableUnitId: rental.cableUnitId,
+      lastSensorState: "CABLE_PRESENT",
+      status: "AVAILABLE",
+    },
+  });
+  await tx.cableUnit.update({
+    where: { id: rental.cableUnitId },
+    data: {
+      currentCompartmentId: rental.compartmentId,
+      currentLockerId: rental.lockerId,
+      status: "AVAILABLE",
+    },
+  });
+
+  return rental.id;
+}
+
+export async function activateUnlockedRental(tx: Tx, rentalId: string) {
+  const rental = await tx.rental.findUnique({
+    where: { id: rentalId },
+  });
+
+  if (!rental || rental.status !== "UNLOCKING") {
+    return null;
+  }
+
+  const chargedWallet = await tx.wallet.updateMany({
+    where: {
+      userId: rental.userId,
+      balance: {
+        gte: rental.rentFee,
+      },
+    },
+    data: {
+      balance: {
+        decrement: rental.rentFee,
+      },
+    },
+  });
+
+  if (chargedWallet.count !== 1) {
+    await failUnlockingRental(tx, rental.id);
+    return null;
+  }
+
+  const wallet = await tx.wallet.findUniqueOrThrow({
+    where: { userId: rental.userId },
+  });
+  const walletTransaction = await tx.walletTransaction.create({
+    data: {
+      walletId: wallet.id,
+      type: "RENT_PAYMENT",
+      amount: rental.rentFee,
+      direction: "DEBIT",
+      status: "SUCCESS",
+      referenceType: "RENTAL",
+      referenceId: rental.id,
+    },
+  });
+
+  const activatedRental = await tx.rental.update({
+    where: { id: rental.id },
+    data: { status: "ACTIVE" },
+    include: {
+      locker: true,
+      compartment: true,
+    },
+  });
+
+  await tx.compartment.update({
+    where: { id: rental.compartmentId },
+    data: {
+      currentCableUnitId: null,
+      lastSensorState: "CABLE_ABSENT",
+      status: "EMPTY",
+    },
+  });
+  await tx.cableUnit.update({
+    where: { id: rental.cableUnitId },
+    data: {
+      currentCompartmentId: null,
+      currentLockerId: null,
+      status: "RENTED",
+    },
+  });
+
+  await tx.notification.updateMany({
+    where: {
+      relatedRentalId: rental.id,
+      type: "RENT_SUCCESS",
+    },
+    data: {
+      relatedTransactionId: walletTransaction.id,
+    },
+  });
+
+  return {
+    rental: activatedRental,
+    walletTransactionId: walletTransaction.id,
+  };
+}
+
+export async function cleanupExpiredUnlockingRentals(userId: string, tx: Tx = prisma) {
+  const expiredRentals = await tx.rental.findMany({
+    where: {
+      userId,
+      status: "UNLOCKING",
+      createdAt: {
+        lte: new Date(Date.now() - rentalUnlockTimeoutMs),
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  for (const rental of expiredRentals) {
+    await expireUnlockingRental(tx, rental.id);
   }
 }
 
@@ -304,24 +476,6 @@ export async function createRental(
       throw insufficientBalanceError();
     }
 
-    const chargedWallet = await tx.wallet.updateMany({
-      where: {
-        id: wallet.id,
-        balance: {
-          gte: rentFee,
-        },
-      },
-      data: {
-        balance: {
-          decrement: rentFee,
-        },
-      },
-    });
-
-    if (chargedWallet.count !== 1) {
-      throw walletChargeFailedError();
-    }
-
     const startedAt = new Date();
     const dueAt = new Date(startedAt.getTime() + input.durationMinutes * 60 * 1000);
     const rental = await tx.rental.create({
@@ -339,22 +493,11 @@ export async function createRental(
       },
     });
 
-    const walletTransaction = await tx.walletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        type: "RENT_PAYMENT",
-        amount: rentFee,
-        direction: "DEBIT",
-        status: "SUCCESS",
-        referenceType: "RENTAL",
-        referenceId: rental.id,
-      },
-    });
-
     await tx.compartment.update({
       where: { id: selected.compartment.id },
       data: {
-        lastSensorState: "CABLE_ABSENT",
+        lastSensorState:
+          env.IOT_MODE === "mock" ? "CABLE_ABSENT" : selected.compartment.lastSensorState,
         status: "RENTED",
       },
     });
@@ -366,99 +509,83 @@ export async function createRental(
       },
     });
 
-    await tx.notification.create({
+    const notification = await tx.notification.create({
       data: {
         userId,
         type: "RENT_SUCCESS",
         title: "Rent Success",
         message: "Extension cable successfully unlocked. Your rental session has started.",
         relatedRentalId: rental.id,
-        relatedTransactionId: walletTransaction.id,
       },
     });
 
     return {
       cableUnitId: selected.cableUnit.id,
       compartmentId: selected.compartment.id,
+      compartmentNumber: selected.compartment.number,
       rentalId: rental.id,
-      walletId: wallet.id,
-      rentFee,
+      notificationId: notification.id,
     };
   });
 
   try {
     const unlockResult = await unlockCompartment({
       compartmentId: created.compartmentId,
+      compartmentNumber: created.compartmentNumber,
       lockerId: input.lockerId,
       rentalId: created.rentalId,
     });
 
-    const rental = await prisma.rental.update({
-      where: { id: created.rentalId },
+    if (env.IOT_MODE !== "mock") {
+      const rental = await prisma.rental.findUniqueOrThrow({
+        where: { id: created.rentalId },
+        include: {
+          locker: true,
+          compartment: true,
+        },
+      });
+
+      return toRentalDetail(rental, unlockResult.unlockRequestId);
+    }
+
+    const activation = await prisma.$transaction(async (tx) => {
+      return activateUnlockedRental(tx, created.rentalId);
+    });
+
+    if (!activation) {
+      throw walletChargeFailedError();
+    }
+
+    await sendPushToUser(userId, {
+      title: "Rent Success",
+      body: "Extension cable successfully unlocked. Your rental session has started.",
       data: {
-        status: "ACTIVE",
-      },
-      include: {
-        locker: true,
-        compartment: true,
+        notificationId: created.notificationId,
+        relatedRentalId: created.rentalId,
+        relatedTransactionId: activation.walletTransactionId,
+        routeHint: "transactions",
+        type: "RENT_SUCCESS",
       },
     });
 
-    return toRentalDetail(rental, unlockResult.unlockRequestId);
+    return toRentalDetail(activation.rental, unlockResult.unlockRequestId);
   } catch {
-    await compensateFailedUnlock(created);
+    await compensateFailedUnlock(created.rentalId);
     throw unlockFailedError();
   }
 }
 
-async function compensateFailedUnlock(created: {
-  cableUnitId: string;
-  compartmentId: string;
-  rentalId: string;
-  rentFee: number;
-  walletId: string;
-}) {
+async function compensateFailedUnlock(rentalId: string) {
   await prisma.$transaction(async (tx) => {
-    await tx.rental.update({
-      where: { id: created.rentalId },
-      data: { status: "FAILED" },
-    });
-    await tx.wallet.update({
-      where: { id: created.walletId },
-      data: {
-        balance: {
-          increment: created.rentFee,
-        },
-      },
-    });
-    await tx.walletTransaction.create({
-      data: {
-        walletId: created.walletId,
-        type: "REFUND",
-        amount: created.rentFee,
-        direction: "CREDIT",
-        status: "SUCCESS",
-        referenceType: "RENTAL",
-        referenceId: created.rentalId,
-      },
-    });
-    await tx.compartment.update({
-      where: { id: created.compartmentId },
-      data: {
-        lastSensorState: "CABLE_PRESENT",
-        status: "AVAILABLE",
-      },
-    });
-    await tx.cableUnit.update({
-      where: { id: created.cableUnitId },
-      data: {
-        status: "AVAILABLE",
-      },
-    });
+    await failUnlockingRental(tx, rentalId);
   });
 }
 
 export async function getActiveRental(userId: string): Promise<ActiveRentalResponse> {
+  await prisma.$transaction(async (tx) => {
+    await cleanupExpiredUnlockingRentals(userId, tx);
+  });
+
   const rental = await prisma.rental.findFirst({
     where: {
       userId,
@@ -496,6 +623,10 @@ export async function getActiveRental(userId: string): Promise<ActiveRentalRespo
 }
 
 export async function getRental(userId: string, rentalId: string): Promise<RentalDetailResponse> {
+  await prisma.$transaction(async (tx) => {
+    await cleanupExpiredUnlockingRentals(userId, tx);
+  });
+
   const rental = await prisma.rental.findUnique({
     where: { id: rentalId },
     include: {

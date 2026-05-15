@@ -8,6 +8,7 @@ let app: Awaited<typeof import("./server.js")>["app"];
 const demoUserId = "usr_demo_001";
 const demoWalletId = "wal_demo_001";
 const demoLockerId = "lck_labtek_v_itb";
+const libraryLockerId = "lck_perpustakaan_pusat_itb";
 let testUserCounter = 0;
 
 beforeAll(async () => {
@@ -18,6 +19,8 @@ beforeAll(async () => {
   process.env.JWT_REFRESH_SECRET ??= "dev_refresh_secret_change_me";
   process.env.MQTT_URL ??= "mqtt://127.0.0.1:1883";
   process.env.IOT_MODE ??= "mock";
+  process.env.PUSH_ENABLED = "false";
+  process.env.PUSH_PROVIDER = "expo";
   process.env.FCM_ENABLED = "false";
 
   await seedDemoData();
@@ -137,8 +140,17 @@ describe("Milestone 2 backend foundation", () => {
         expect.objectContaining({
           id: demoLockerId,
           name: "Labtek V ITB",
-          availableCableCount: 3,
-          totalCompartments: 8,
+          availableCableCount: 2,
+          totalCompartments: 2,
+          status: "ONLINE",
+        }),
+        expect.objectContaining({
+          id: libraryLockerId,
+          name: "Perpustakaan Pusat ITB",
+          lat: -6.88784,
+          lng: 107.61078,
+          availableCableCount: 4,
+          totalCompartments: 4,
           status: "ONLINE",
         }),
       ]),
@@ -149,7 +161,7 @@ describe("Milestone 2 backend foundation", () => {
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.data).toMatchObject({
       id: demoLockerId,
-      availableCableCount: 3,
+      availableCableCount: 2,
       compartments: expect.arrayContaining([
         expect.objectContaining({
           id: "cmp_labtek_v_001",
@@ -539,7 +551,7 @@ describe("Milestone 5 rent flow with mock IoT", () => {
       rentFee: 50000,
       depositAmount: 0,
       totalCharge: 50000,
-      availableCableCount: 3,
+      availableCableCount: 2,
     });
   });
 
@@ -624,8 +636,9 @@ describe("Milestone 5 rent flow with mock IoT", () => {
     await expect(
       prisma.compartment.findUniqueOrThrow({ where: { id: locker.compartmentId } }),
     ).resolves.toMatchObject({
+      currentCableUnitId: null,
       lastSensorState: "CABLE_ABSENT",
-      status: "RENTED",
+      status: "EMPTY",
     });
     await expect(
       prisma.cableUnit.findUniqueOrThrow({ where: { id: locker.cableUnitId } }),
@@ -994,6 +1007,54 @@ describe("Milestone 6 active rental timer and notifications", () => {
 });
 
 describe("Milestone 7 return flow with fine payment", () => {
+  it("expires an unlocking rental after timeout without charging the wallet", async () => {
+    const auth = await registerTestUser();
+    await setWalletBalance(auth.userId, 50_000);
+    const locker = await createReturnReadyLocker();
+    const rental = await prisma.rental.create({
+      data: {
+        userId: auth.userId,
+        lockerId: locker.lockerId,
+        compartmentId: locker.rentedCompartmentId,
+        cableUnitId: locker.cableUnitId,
+        status: "UNLOCKING",
+        durationMinutes: 30,
+        startedAt: new Date(Date.now() - 90 * 1000),
+        dueAt: new Date(Date.now() + 30 * 60 * 1000),
+        rentFee: 12_500,
+        totalFee: 12_500,
+        createdAt: new Date(Date.now() - 90 * 1000),
+      },
+    });
+
+    const active = await request(app)
+      .get("/v1/rentals/active")
+      .set("Authorization", `Bearer ${auth.accessToken}`);
+
+    expect(active.status).toBe(200);
+    expect(active.body.data).toBeNull();
+
+    const expiredRental = await prisma.rental.findUniqueOrThrow({ where: { id: rental.id } });
+    expect(expiredRental.status).toBe("FAILED");
+
+    const wallet = await prisma.wallet.findUniqueOrThrow({
+      where: { userId: auth.userId },
+    });
+    expect(wallet.balance).toBe(50_000);
+
+    await expect(
+      prisma.walletTransaction.count({
+        where: {
+          referenceId: rental.id,
+          referenceType: "RENTAL",
+          type: {
+            in: ["REFUND", "RENT_PAYMENT"],
+          },
+        },
+      }),
+    ).resolves.toBe(0);
+  });
+
   it("creates a return intent for an active rental and returns no fine before due time", async () => {
     const auth = await registerTestUser();
     await setWalletBalance(auth.userId, 100000);
@@ -1161,7 +1222,7 @@ describe("Milestone 7 return flow with fine payment", () => {
     );
   });
 
-  it("does not close a return session that times out before sensor verification", async () => {
+  it("marks the return as failed and the cable as lost when return sensor verification times out", async () => {
     const auth = await registerTestUser();
     const locker = await createReturnReadyLocker();
     const rental = await createActiveRental(auth.userId, locker, {
@@ -1192,13 +1253,26 @@ describe("Milestone 7 return flow with fine payment", () => {
     expect(response.body.data).toMatchObject({
       id: returnSession.id,
       rentalId: rental.id,
-      status: "TIMEOUT",
+      status: "FAILED",
       verifiedAt: null,
     });
 
-    const updatedRental = await prisma.rental.findUniqueOrThrow({ where: { id: rental.id } });
-    expect(updatedRental.status).toBe("WAITING_FOR_SENSOR");
+    const updatedRental = await prisma.rental.findUniqueOrThrow({
+      where: { id: rental.id },
+      include: { cableUnit: true },
+    });
+    expect(updatedRental.status).toBe("FAILED");
     expect(updatedRental.returnedAt).toBeNull();
+    expect(updatedRental.cableUnit.status).toBe("LOST");
+    expect(updatedRental.cableUnit.currentCompartmentId).toBeNull();
+    expect(updatedRental.cableUnit.currentLockerId).toBeNull();
+
+    const updatedCompartment = await prisma.compartment.findUniqueOrThrow({
+      where: { id: locker.returnCompartmentId },
+    });
+    expect(updatedCompartment.status).toBe("EMPTY");
+    expect(updatedCompartment.lastSensorState).toBe("CABLE_ABSENT");
+    expect(updatedCompartment.currentCableUnitId).toBeNull();
   });
 });
 
@@ -1413,7 +1487,26 @@ async function seedDemoData() {
     },
   });
 
-  for (let number = 1; number <= 8; number += 1) {
+  const staleLabtekNumbers = Array.from({ length: 6 }, (_, index) => index + 3);
+  await prisma.cableUnit.deleteMany({
+    where: {
+      id: {
+        in: staleLabtekNumbers.map(
+          (number) => `cbl_labtek_v_${number.toString().padStart(3, "0")}`,
+        ),
+      },
+    },
+  });
+  await prisma.compartment.deleteMany({
+    where: {
+      lockerId: locker.id,
+      number: {
+        in: staleLabtekNumbers,
+      },
+    },
+  });
+
+  for (let number = 1; number <= 2; number += 1) {
     await prisma.compartment.upsert({
       where: {
         lockerId_number: {
@@ -1422,20 +1515,20 @@ async function seedDemoData() {
         },
       },
       update: {
-        status: number <= 3 ? "AVAILABLE" : "EMPTY",
-        lastSensorState: number <= 3 ? "CABLE_PRESENT" : "CABLE_ABSENT",
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
       },
       create: {
         id: `cmp_labtek_v_${number.toString().padStart(3, "0")}`,
         lockerId: locker.id,
         number,
-        status: number <= 3 ? "AVAILABLE" : "EMPTY",
-        lastSensorState: number <= 3 ? "CABLE_PRESENT" : "CABLE_ABSENT",
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
       },
     });
   }
 
-  for (let number = 1; number <= 3; number += 1) {
+  for (let number = 1; number <= 2; number += 1) {
     const compartmentId = `cmp_labtek_v_${number.toString().padStart(3, "0")}`;
     const cableUnit = await prisma.cableUnit.upsert({
       where: { serialNumber: `COL-ITB-${number.toString().padStart(3, "0")}` },
@@ -1455,6 +1548,81 @@ async function seedDemoData() {
         isSniCertified: true,
         hasOverloadProtection: true,
         currentLockerId: locker.id,
+        currentCompartmentId: compartmentId,
+      },
+    });
+
+    await prisma.compartment.update({
+      where: { id: compartmentId },
+      data: {
+        currentCableUnitId: cableUnit.id,
+      },
+    });
+  }
+
+  const libraryLocker = await prisma.locker.upsert({
+    where: { id: libraryLockerId },
+    update: {
+      name: "Perpustakaan Pusat ITB",
+      address: "Kampus ITB Ganesha, Bandung",
+      lat: -6.887839742717819,
+      lng: 107.61077991147646,
+      status: "ONLINE",
+      operationalHours: "24/7",
+      lastHeartbeatAt: new Date(),
+    },
+    create: {
+      id: libraryLockerId,
+      name: "Perpustakaan Pusat ITB",
+      address: "Kampus ITB Ganesha, Bandung",
+      lat: -6.887839742717819,
+      lng: 107.61077991147646,
+      status: "ONLINE",
+      operationalHours: "24/7",
+      lastHeartbeatAt: new Date(),
+    },
+  });
+
+  for (let number = 1; number <= 4; number += 1) {
+    const compartmentId = `cmp_perpus_pusat_${number.toString().padStart(3, "0")}`;
+    await prisma.compartment.upsert({
+      where: {
+        lockerId_number: {
+          lockerId: libraryLocker.id,
+          number,
+        },
+      },
+      update: {
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
+      },
+      create: {
+        id: compartmentId,
+        lockerId: libraryLocker.id,
+        number,
+        status: "AVAILABLE",
+        lastSensorState: "CABLE_PRESENT",
+      },
+    });
+
+    const cableUnit = await prisma.cableUnit.upsert({
+      where: { serialNumber: `COL-PERPUS-${number.toString().padStart(3, "0")}` },
+      update: {
+        status: "AVAILABLE",
+        specification: "Extension cable 4 outlet, 3 meter, 2500W",
+        isSniCertified: true,
+        hasOverloadProtection: true,
+        currentLockerId: libraryLocker.id,
+        currentCompartmentId: compartmentId,
+      },
+      create: {
+        id: `cbl_perpus_pusat_${number.toString().padStart(3, "0")}`,
+        serialNumber: `COL-PERPUS-${number.toString().padStart(3, "0")}`,
+        status: "AVAILABLE",
+        specification: "Extension cable 4 outlet, 3 meter, 2500W",
+        isSniCertified: true,
+        hasOverloadProtection: true,
+        currentLockerId: libraryLocker.id,
         currentCompartmentId: compartmentId,
       },
     });

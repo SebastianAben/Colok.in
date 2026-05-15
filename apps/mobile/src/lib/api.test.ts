@@ -30,3 +30,34 @@ test("apiRequest reports non-json server responses", async () => {
     return true;
   });
 });
+
+test("apiRequest preserves API error details", async () => {
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Request validation failed.",
+            details: {
+              issues: [{ code: "too_small", path: ["password"], message: "Too small" }],
+            },
+          },
+          meta: { requestId: "test-request" },
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: 400,
+        },
+      ),
+    )) as typeof fetch;
+
+  await assert.rejects(apiRequest("/auth/register"), (error) => {
+    assert.ok(error instanceof ApiClientError);
+    assert.equal(error.code, "VALIDATION_ERROR");
+    assert.deepEqual(error.details, {
+      issues: [{ code: "too_small", path: ["password"], message: "Too small" }],
+    });
+    return true;
+  });
+});
